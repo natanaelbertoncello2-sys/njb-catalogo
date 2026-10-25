@@ -1,8 +1,8 @@
 // Service worker: la app abre sin conexión. Las llamadas a Google siempre van a la red.
-const VERSION = 'njb-1.0.1';
+const VERSION = 'njb-1.1.0';
 const SHELL = [
   './', 'index.html', 'manifest.webmanifest', 'css/app.css',
-  'js/app.js', 'js/ui.js', 'js/db.js', 'js/drive.js', 'js/camera.js', 'js/render.js', 'js/process.js', 'js/config.js',
+  'js/app.js', 'js/ui.js', 'js/db.js', 'js/drive.js', 'js/camera.js', 'js/render.js', 'js/process.js', 'js/config.js', 'js/targets.js',
   'icons/icon-192.png', 'icons/icon-512.png', 'icons/apple-touch-icon.png',
 ];
 

@@ -40,7 +40,7 @@
       </button>
       <button class="folder-chip" id="btnFolder">
         <svg viewBox="0 0 24 24"><path d="M10 4H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-8l-2-2z"/></svg>
-        <span id="folderName">Elegir carpeta</span>
+        <span id="folderName">Guardar en…</span>
       </button>
       <div class="top-actions">
         <button class="icon-btn" id="btnTorch" aria-label="Linterna" hidden><svg viewBox="0 0 24 24"><path d="M7 2v11h3v9l7-12h-4l4-8z"/></svg></button>
@@ -220,15 +220,30 @@
   <div class="sheet hidden" id="sheetSettings">
     <div class="sheet-head"><b>Ajustes</b><button class="icon-btn" data-close>✕</button></div>
     <div class="sheet-body">
-      <h4>Google Drive</h4>
-      <p class="muted" id="driveStatus">No conectado</p>
-      <div class="row-btns">
-        <button class="btn primary" id="driveConnect">Conectar Drive</button>
-        <button class="btn ghost-btn" id="driveDisconnect">Desconectar</button>
-      </div>
-      <label class="field">Client ID de Google (OAuth)
-        <input type="text" id="clientId" placeholder="xxxxxxxx.apps.googleusercontent.com" autocomplete="off" autocapitalize="off" spellcheck="false">
+      <h4>Guardar en</h4>
+      <label class="field">
+        <select id="dest">
+          <option value="folder">Carpeta del dispositivo</option>
+          <option value="share">Guardar en Archivos / Compartir</option>
+          <option value="drive">Google Drive directo (avanzado)</option>
+        </select>
       </label>
+      <p class="muted small" id="destHint"></p>
+      <div class="row-btns" id="destFolderRow">
+        <span class="muted" style="align-self:center">Carpeta: <b id="destFolderName"></b></span>
+        <button class="btn primary" id="destPick">Elegir carpeta</button>
+      </div>
+
+      <div id="driveSection" class="sheet-body" style="padding:0">
+        <p class="muted" id="driveStatus">No conectado</p>
+        <div class="row-btns">
+          <button class="btn primary" id="driveConnect">Conectar Drive</button>
+          <button class="btn ghost-btn" id="driveDisconnect">Desconectar</button>
+        </div>
+        <label class="field">Client ID de Google (OAuth)
+          <input type="text" id="clientId" placeholder="xxxxxxxx.apps.googleusercontent.com" autocomplete="off" autocapitalize="off" spellcheck="false">
+        </label>
+      </div>
 
       <h4>Exportación</h4>
       <label class="field">Tamaño máximo (lado largo)
@@ -244,7 +259,7 @@
         <input type="range" id="jpgQ" min="60" max="100" step="1">
       </label>
       <label class="check"><input type="checkbox" id="autoApply"> Aplicar el estilo por defecto a cada foto nueva</label>
-      <label class="check"><input type="checkbox" id="keepOriginal"> Guardar también la foto original (subcarpeta «originales»)</label>
+      <label class="check"><input type="checkbox" id="keepOriginal"> Guardar también la foto original (subcarpeta «originales», no aplica a Guardar en Archivos)</label>
       <label class="field">Separador de numeración
         <select id="sep">
           <option value="_">PRODUCTO_1.jpg</option>
@@ -256,8 +271,6 @@
       <h4>Cámara</h4>
       <label class="check"><input type="checkbox" id="haptics"> Vibrar al estar nivelado</label>
 
-      <h4>Sin Drive</h4>
-      <p class="muted">Si no configurás Drive, al guardar se abre el menú Compartir del iPhone («Guardar en Archivos» → carpeta de Drive).</p>
       <p class="muted small" id="appVersion"></p>
     </div>
   </div>

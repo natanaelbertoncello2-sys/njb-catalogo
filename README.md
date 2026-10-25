@@ -1,6 +1,19 @@
-# NJB Catálogo (web / iPhone)
+# NJB Catálogo (web / iPhone / Android / PC)
 
-App web (PWA) para sacar fotos de producto, dejarlas listas para catálogo y guardarlas directo en una carpeta de Google Drive con el nombre del producto.
+App web (PWA) para sacar fotos de producto, dejarlas listas para catálogo y guardarlas con el nombre del producto en la carpeta que cada usuario elija. Cualquiera la puede usar: no necesita cuenta ni configuración.
+
+**Publicada en:** https://natanaelbertoncello2-sys.github.io/njb-catalogo/
+
+## Dónde se guardan las fotos
+
+| Dispositivo | Cómo |
+|---|---|
+| PC (Chrome / Edge) | Elegís una carpeta una vez y se guarda ahí directo. Si elegís la carpeta de **Google Drive para escritorio**, se sincroniza sola. |
+| Android (Chrome) | Elegís una carpeta del teléfono una vez y se guarda ahí directo. |
+| iPhone (Safari) | Apple no permite que una web escriba en carpetas. Al guardar se abre «Guardar en Archivos» y elegís la carpeta (puede ser de Drive); iOS recuerda la última usada. |
+| Avanzado | Google Drive directo por API (requiere Client ID propio de Google Cloud; ver más abajo). |
+
+Se cambia en **Ajustes → Guardar en**.
 
 Es HTML/CSS/JS puro: no requiere compilación. Cualquier hosting estático con HTTPS sirve.
 
@@ -15,10 +28,9 @@ Es HTML/CSS/JS puro: no requiere compilación. Cualquier hosting estático con H
   - Rotar, espejo, enderezar, recorte manual.
   - Auto mejorar (niveles + balance de blancos), exposición, contraste, saturación, temperatura y nitidez.
   - **Aplicar a todas** y **Usar por defecto** (cada foto nueva sale con ese estilo).
-- **Guardado en Drive**: `PRODUCTO.jpg`, `PRODUCTO_1.jpg`, `PRODUCTO_2.jpg`… sin pisar archivos existentes. Botón **Deshacer** (manda lo subido a la papelera y devuelve las fotos a la bandeja). Opción de guardar también el original en la subcarpeta `originales`.
-- **Catálogo**: explora la carpeta de Drive con miniaturas y buscador. Cada foto se puede re-editar (reemplaza el archivo), usar como base, usar como guía fantasma o mandar a la papelera.
-- **No se pierde nada**: las fotos sin guardar quedan en el teléfono (IndexedDB) aunque Safari se cierre. Si se corta internet o vence la sesión de Google, quedan en cola y se reintentan.
-- **Sin Drive**: si no configurás el Client ID, «Guardar» abre el menú Compartir de iOS (Guardar en Archivos → Drive).
+- **Nombres automáticos**: `PRODUCTO.jpg`, `PRODUCTO_1.jpg`, `PRODUCTO_2.jpg`… sin pisar archivos existentes. Botón **Deshacer**. Opción de guardar también el original en la subcarpeta `originales`.
+- **Catálogo**: explora la carpeta destino con miniaturas y buscador. Cada foto se puede re-editar (reemplaza el archivo), usar como base, usar como guía fantasma o eliminar.
+- **No se pierde nada**: las fotos sin guardar quedan en el dispositivo (IndexedDB) aunque se cierre el navegador, y quedan en cola si algo falla.
 
 ## 1. Publicarla (HTTPS obligatorio para la cámara)
 
@@ -30,7 +42,9 @@ Opción simple — **GitHub Pages**:
 
 Alternativa sin cuenta de Git: **Netlify Drop** (https://app.netlify.com/drop) — arrastrás la carpeta `catalogo_web` y listo.
 
-## 2. Conectar Google Drive (una sola vez, ~5 minutos)
+## 2. (Opcional, avanzado) Google Drive directo por API
+
+No hace falta para usar la app. Solo sirve si querés subir directo a Drive desde el iPhone sin pasar por «Guardar en Archivos». En modo prueba, Google solo deja usarlo a las cuentas agregadas como «usuarios de prueba».
 
 1. Entrá a https://console.cloud.google.com/ y creá un proyecto (por ejemplo «NJB Catálogo»).
 2. **APIs y servicios → Biblioteca** → buscar **Google Drive API** → Habilitar.

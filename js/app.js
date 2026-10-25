@@ -5,14 +5,16 @@ import { Camera } from './camera.js';
 import { Renderer } from './render.js';
 import { BASE_EDITS, cloneEdits, normalizeImport } from './process.js';
 import { GOOGLE_CLIENT_ID, APP_VERSION } from './config.js';
+import { folderTarget, folderSupported, makeDriveTarget, NeedsGesture } from './targets.js';
 
 /* ================================================================== */
 /* Estado                                                              */
 /* ================================================================== */
 
 const settings = loadSettings({
+  dest: folderSupported ? 'folder' : 'share', // 'folder' | 'share' | 'drive'
   clientId: GOOGLE_CLIENT_ID,
-  folder: null,            // {id, name}
+  folder: null,            // carpeta de Drive {id, name}
   outSize: 2048,
   jpgQ: 90,
   autoApply: false,
@@ -23,7 +25,12 @@ const settings = loadSettings({
   tools: { grid: false, square: false, ghost: false, timer: false, burst: false },
 });
 if (!settings.clientId && GOOGLE_CLIENT_ID) settings.clientId = GOOGLE_CLIENT_ID;
+if (settings.dest === 'folder' && !folderSupported) settings.dest = 'share';
 const persistSettings = () => saveSettings(settings);
+
+const driveTarget = makeDriveTarget(settings);
+// Destino actual (null = «Guardar en Archivos» / Compartir).
+const target = () => (settings.dest === 'folder' ? folderTarget : settings.dest === 'drive' ? driveTarget : null);
 
 let photos = [];              // fotos de la sesión (aún no guardadas)
 const thumbUrls = new Map();  // id → objectURL
@@ -50,6 +57,7 @@ async function init() {
   } catch (err) { toast(err.message, { type: 'error', ms: 5000 }); }
 
   navigator.storage?.persist?.().catch(() => {});
+  await folderTarget.load();
   try {
     photos = await db.all();
     for (const p of photos) if (p.status === 'uploading') p.status = 'queued';
@@ -73,7 +81,7 @@ async function init() {
   }
 
   if (photos.some((p) => p.status === 'queued')) processQueue();
-  if (settings.folder && drive.token()) loadNameSuggestions();
+  loadNameSuggestions();
 }
 
 /* ================================================================== */
@@ -678,24 +686,40 @@ function bindCropGestures() {
 }
 
 /* ================================================================== */
-/* Guardar / subir                                                     */
+/* Guardar                                                             */
 /* ================================================================== */
+
+const DEST_LABEL = { folder: 'Carpeta del dispositivo', share: 'Guardar en Archivos / Compartir', drive: 'Google Drive directo' };
 
 function bindSaving() {
   $('#btnSave').addEventListener('click', onSave);
-  $('#queuePill').addEventListener('click', () => {
-    if (!drive.token() && settings.clientId) drive.connect(settings.clientId);
-    else processQueue();
+  $('#queuePill').addEventListener('click', async () => {
+    if (settings.dest === 'drive' && !drive.token()) { connectDrive(); return; }
+    if (settings.dest === 'folder') {
+      try { await folderTarget.prepare({ interactive: true }); } catch (err) { toast(err.message, { type: 'error' }); return; }
+    }
+    processQueue();
   });
+}
+
+function connectDrive() {
+  try { drive.connect(settings.clientId); } catch (err) { toast(err.message, { type: 'error' }); showSettings(); }
 }
 
 async function onSave() {
   if (!photos.length || uploading) return;
-  const useDrive = !!settings.clientId;
-  if (useDrive && !settings.folder) {
-    toast('Primero elegí la carpeta de Drive');
-    openFolderSheet();
-    return;
+  const t = target();
+
+  // Carpeta del dispositivo: elegirla o renovar el permiso aprovechando este toque.
+  if (settings.dest === 'folder') {
+    try {
+      if (!folderTarget.configured()) { if (!await pickLocalFolder()) return; }
+      await folderTarget.prepare({ interactive: true });
+    } catch (err) { toast(err.message, { type: 'error' }); return; }
+  }
+  if (settings.dest === 'drive') {
+    if (!settings.clientId) { toast('Falta el Client ID de Google (Ajustes)'); showSettings(); return; }
+    if (!settings.folder) { toast('Primero elegí la carpeta de Drive'); openDriveFolderSheet(); return; }
   }
 
   const unnamed = photos.filter((p) => !p.name);
@@ -717,58 +741,59 @@ async function onSave() {
   $('#productName').value = '';
   renderTray();
 
-  if (useDrive) {
-    // Si el token venció, redirigimos ya (estamos dentro del toque del usuario).
-    if (!drive.token()) { drive.connect(settings.clientId); return; }
-    processQueue();
-  } else {
-    shareFallback();
-  }
+  if (!t) { shareFallback(); return; }
+  // Drive: si el token venció, redirigimos ya (estamos dentro del toque del usuario).
+  if (settings.dest === 'drive' && !drive.token()) { connectDrive(); return; }
+  processQueue();
 }
 
 function updateQueuePill() {
   const pill = $('#queuePill');
   const q = photos.filter((p) => p.status === 'queued' || p.status === 'error').length;
-  if (!q || uploading || !settings.clientId) { pill.classList.add('hidden'); return; }
-  pill.textContent = drive.token() ? `${q} pendiente(s) · tocar para reintentar` : `${q} pendiente(s) · tocar para reconectar Drive`;
+  if (!q || uploading || !target()) { pill.classList.add('hidden'); return; }
+  pill.textContent = settings.dest === 'drive' && !drive.token()
+    ? `${q} pendiente(s) · tocar para reconectar Drive`
+    : `${q} pendiente(s) · tocar para guardar`;
   pill.classList.remove('hidden');
 }
 
 async function processQueue() {
-  if (uploading || !settings.clientId) return;
+  const t = target();
+  if (uploading || !t) return;
   const queue = photos.filter((p) => p.status === 'queued' || p.status === 'error');
   if (!queue.length) return;
-  if (!drive.token()) { updateQueuePill(); return; }
-  if (!settings.folder) { openFolderSheet(); return; }
+  try {
+    await t.prepare();
+  } catch (err) {
+    // Sin permiso/sesión todavía: queda en cola hasta que el usuario toque la píldora.
+    if (!(err instanceof NeedsGesture) && !(err instanceof AuthError)) toast(err.message, { type: 'error' });
+    updateQueuePill();
+    return;
+  }
 
   uploading = true;
   renderTray();
-  const folder = settings.folder;
-  const batch = { folder, items: [] };
+  const dest = t.label();
+  const batch = { kind: t.kind, items: [] };
   let ok = 0, failed = 0;
   try {
-    const taken = await drive.namesIn(folder.id);
-    let origFolder = null, origTaken = null;
+    const taken = await t.names();
     for (const p of queue) {
       p.status = 'uploading';
       renderTray();
       showUploadProgress(ok + failed + 1, queue.length);
       try {
         const blob = await renderer.exportBlob(p, p.edits, settings.outSize, settings.jpgQ / 100);
-        let res;
-        if (p.driveFileId) {
-          const name = p.driveName && p.driveName.replace(/\.[^.]+$/, '').startsWith(p.name) ? p.driveName : uniqueName(p.name, taken, settings.sep);
-          res = await drive.upload(blob, { name, fileId: p.driveFileId });
+        const replacing = p.replace && p.replace.kind === t.kind;
+        let id;
+        if (replacing) {
+          const keep = p.replace.name.replace(/\.[^.]+$/, '').startsWith(p.name);
+          id = await t.replace(blob, p.replace.id, keep ? p.replace.name : uniqueName(p.name, taken, settings.sep));
         } else {
-          res = await drive.upload(blob, { name: uniqueName(p.name, taken, settings.sep), parentId: folder.id });
+          id = await t.create(blob, uniqueName(p.name, taken, settings.sep));
         }
-        let origId = null;
-        if (settings.keepOriginal) {
-          origFolder ||= await drive.findOrCreateFolder('originales', folder.id);
-          origTaken ||= await drive.namesIn(origFolder.id);
-          origId = (await drive.upload(p.blob, { name: uniqueName(p.name, origTaken, settings.sep), parentId: origFolder.id })).id;
-        }
-        batch.items.push({ photo: { ...p, status: 'new' }, fileId: res.id, origId, replaced: !!p.driveFileId });
+        const origId = settings.keepOriginal ? await t.saveOriginal(p.blob, p.name, settings.sep) : null;
+        batch.items.push({ photo: { ...p, status: 'new' }, id, origId, replaced: replacing });
         photos.splice(photos.indexOf(p), 1);
         await db.delete(p.id);
         forgetPhoto(p);
@@ -789,7 +814,7 @@ async function processQueue() {
     if (err instanceof AuthError) {
       toast('La sesión de Drive venció. Tocá «reconectar» para continuar.', { type: 'error', ms: 6000 });
     } else {
-      toast('No se pudo subir: ' + err.message, { type: 'error', ms: 6000 });
+      toast('No se pudo guardar: ' + err.message, { type: 'error', ms: 6000 });
       queue.forEach((p) => { if (p.status === 'uploading') p.status = 'error'; });
     }
   } finally {
@@ -799,7 +824,7 @@ async function processQueue() {
 
   if (ok) {
     lastBatch = batch;
-    toast(`${ok} foto(s) guardadas en «${folder.name}»${failed ? ` · ${failed} con error` : ''}`, {
+    toast(`${ok} foto(s) guardadas en «${dest}»${failed ? ` · ${failed} con error` : ''}`, {
       type: failed ? 'error' : 'ok',
       action: batch.items.some((i) => !i.replaced) ? undoLastBatch : null,
       actionLabel: 'Deshacer',
@@ -810,20 +835,21 @@ async function processQueue() {
 
 function showUploadProgress(i, n) {
   const pill = $('#queuePill');
-  pill.textContent = `Subiendo ${i}/${n}…`;
+  pill.textContent = `Guardando ${i}/${n}…`;
   pill.classList.remove('hidden');
 }
 
 async function undoLastBatch() {
   const b = lastBatch;
   lastBatch = null;
-  if (!b) return;
+  const t = target();
+  if (!b || !t || t.kind !== b.kind) return;
   let n = 0;
   for (const it of b.items) {
     if (it.replaced) continue;
     try {
-      await drive.trash(it.fileId);
-      if (it.origId) await drive.trash(it.origId).catch(() => {});
+      await t.trash(it.id);
+      if (it.origId) await t.trash(it.origId).catch(() => {});
       photos.push(it.photo);
       await db.put(it.photo);
       refreshThumb(it.photo);
@@ -832,10 +858,10 @@ async function undoLastBatch() {
   }
   photos.sort((a, c) => a.createdAt - c.createdAt);
   renderTray();
-  if (n) toast(`Deshecho: ${n} foto(s) volvieron a la bandeja (en Drive quedaron en la papelera)`);
+  if (n) toast(b.kind === 'drive' ? `Deshecho: ${n} foto(s) volvieron a la bandeja (en Drive quedaron en la papelera)` : `Deshecho: ${n} foto(s) volvieron a la bandeja`);
 }
 
-// Sin Drive configurado: se generan los JPG y se abre el menú Compartir de iOS.
+// iPhone (o sin carpeta): se generan los JPG y se abre el menú Compartir → «Guardar en Archivos».
 async function shareFallback() {
   const queue = photos.filter((p) => p.status === 'queued');
   uploading = true;
@@ -863,9 +889,9 @@ async function shareFallback() {
   const go = await dialog({
     title: `${files.length} foto(s) listas`,
     text: canShare
-      ? 'Tocá «Compartir» y elegí «Guardar en Archivos» → Google Drive → tu carpeta.\n\nPara subir directo a Drive, configurá el Client ID en Ajustes.'
-      : 'Se descargarán los archivos. Para subir directo a Drive, configurá el Client ID en Ajustes.',
-    okLabel: canShare ? 'Compartir' : 'Descargar',
+      ? 'Tocá «Guardar», elegí «Guardar en Archivos» y después la carpeta (puede ser una carpeta de Drive). La próxima vez el iPhone te propone la misma carpeta.'
+      : 'Se descargarán a la carpeta de descargas del navegador.',
+    okLabel: canShare ? 'Guardar' : 'Descargar',
   });
   if (!go) return;
   try {
@@ -878,10 +904,10 @@ async function shareFallback() {
       setTimeout(() => URL.revokeObjectURL(a.href), 10_000);
     }
   } catch (err) {
-    if (err.name !== 'AbortError') toast('No se pudo compartir: ' + err.message, { type: 'error' });
+    if (err.name !== 'AbortError') toast('No se pudo guardar: ' + err.message, { type: 'error' });
     return;
   }
-  if (await dialog({ title: '¿Quitar las fotos de la bandeja?', text: 'Hacelo solo si se guardaron bien.', okLabel: 'Quitar' })) {
+  if (await dialog({ title: '¿Se guardaron bien?', text: 'Si es así, quito las fotos de la bandeja.', okLabel: 'Sí, quitar' })) {
     await removePhotos(queue);
   }
 }
@@ -897,33 +923,54 @@ async function removePhotos(list) {
 }
 
 /* ================================================================== */
-/* Carpeta de Drive                                                    */
+/* Elegir destino / carpeta                                            */
 /* ================================================================== */
-
-const folderNav = { stack: [{ id: 'root', name: 'Mi unidad' }] };
 
 function updateFolderChip() {
   const chip = $('#btnFolder');
-  const f = settings.folder;
-  $('#folderName').textContent = f ? f.name : settings.clientId ? 'Elegir carpeta' : 'Configurar Drive';
-  chip.classList.toggle('warn', !!settings.clientId && !f);
+  let label, warn = false;
+  if (settings.dest === 'folder') { label = folderTarget.label() || 'Elegir carpeta'; warn = !folderTarget.configured(); }
+  else if (settings.dest === 'drive') { label = settings.folder?.name || 'Elegir carpeta de Drive'; warn = !settings.folder; }
+  else label = 'Guardar en Archivos';
+  $('#folderName').textContent = label;
+  chip.classList.toggle('warn', warn);
+  $('#btnCatalog').hidden = !target();
 }
 
-function needDrive() {
-  if (!settings.clientId) {
-    showSheet('#sheetSettings');
-    toast('Pegá tu Client ID de Google para conectar Drive');
+async function pickLocalFolder() {
+  try {
+    await folderTarget.pick();
+    updateFolderChip();
+    toast(`Las fotos se guardarán en «${folderTarget.label()}»`, { type: 'ok' });
+    loadNameSuggestions();
     return true;
+  } catch (err) {
+    if (err.name !== 'AbortError') toast('No se pudo usar esa carpeta: ' + err.message, { type: 'error' });
+    return false;
   }
-  if (!drive.token()) {
-    drive.connect(settings.clientId);
-    return true;
-  }
-  return false;
 }
 
-function openFolderSheet() {
-  if (needDrive()) return;
+async function onFolderChip() {
+  if (settings.dest === 'folder') {
+    if (await pickLocalFolder()) processQueue();
+  } else if (settings.dest === 'drive') {
+    openDriveFolderSheet();
+  } else {
+    const k = await actionSheet('¿Dónde se guardan las fotos?', [
+      { key: 'info', label: 'Al guardar elegís la carpeta con «Guardar en Archivos»' },
+      { key: 'settings', label: 'Cambiar destino en Ajustes' },
+    ]);
+    if (k === 'settings') showSettings();
+  }
+}
+
+/* ---------- carpeta de Drive (modo avanzado) ---------- */
+
+const folderNav = { stack: [{ id: 'root', name: 'Mi unidad' }] };
+
+function openDriveFolderSheet() {
+  if (!settings.clientId) { toast('Falta el Client ID de Google (Ajustes)'); showSettings(); return; }
+  if (!drive.token()) { connectDrive(); return; }
   showSheet('#sheetFolder');
   loadFolderLevel();
 }
@@ -956,7 +1003,7 @@ async function loadFolderLevel() {
     }
   } catch (err) {
     list.innerHTML = '';
-    if (err instanceof AuthError) { closeSheet(); drive.connect(settings.clientId); return; }
+    if (err instanceof AuthError) { closeSheet(); connectDrive(); return; }
     const li = document.createElement('li');
     li.className = 'empty';
     li.textContent = err.message;
@@ -965,7 +1012,7 @@ async function loadFolderLevel() {
 }
 
 function bindFolderSheet() {
-  $('#btnFolder').addEventListener('click', openFolderSheet);
+  $('#btnFolder').addEventListener('click', onFolderChip);
   $('#sheetBackdrop').addEventListener('click', closeSheet);
   $$('[data-close]').forEach((b) => b.addEventListener('click', closeSheet));
   $('#folderChoose').addEventListener('click', () => {
@@ -994,11 +1041,14 @@ function bindFolderSheet() {
 const suffixRegex = () => new RegExp(`[${settings.sep.replace(/[-\\\]^]/g, '\\$&')}]\\d+$`);
 
 async function loadNameSuggestions() {
-  if (!settings.folder || !drive.token()) return;
+  const t = target();
+  if (!t || !t.configured()) return;
   try {
-    const files = await drive.listImages(settings.folder.id);
+    if (t.kind === 'folder' && !await folderTarget.hasPermission()) return;
+    if (t.kind === 'drive' && !drive.token()) return;
+    const names = await t.allNames();
     const re = suffixRegex();
-    const bases = new Set(files.map((f) => f.name.replace(/\.[^.]+$/, '').replace(re, '')));
+    const bases = new Set(names.map((n) => n.replace(/\.[^.]+$/, '').replace(re, '')));
     const dl = $('#nameSuggestions');
     dl.innerHTML = '';
     for (const b of [...bases].slice(0, 300)) { const o = document.createElement('option'); o.value = b; dl.append(o); }
@@ -1011,25 +1061,52 @@ async function loadNameSuggestions() {
 
 async function refreshDriveStatus() {
   const st = $('#driveStatus');
-  if (!settings.clientId) { st.textContent = 'Falta el Client ID (ver README).'; return; }
+  if (!settings.clientId) { st.textContent = 'Falta el Client ID.'; return; }
   if (!drive.token()) { st.textContent = drive.wasConnected() ? 'Sesión vencida — tocá Conectar' : 'No conectado'; return; }
   st.textContent = 'Conectado';
   try { const u = await drive.user(); st.textContent = `Conectado como ${u.emailAddress}`; } catch { /* nada */ }
 }
 
+function syncDestUI() {
+  $('#dest').value = settings.dest;
+  $('#destFolderRow').classList.toggle('hidden', settings.dest !== 'folder');
+  $('#destFolderName').textContent = folderTarget.label() || 'ninguna';
+  $('#driveSection').classList.toggle('hidden', settings.dest !== 'drive');
+  $('#destHint').textContent = {
+    folder: 'Las fotos se escriben directo en la carpeta que elijas. En una PC podés elegir la carpeta de Google Drive para escritorio y se sincroniza sola.',
+    share: 'Al guardar se abre el menú del sistema: elegí «Guardar en Archivos» y la carpeta (en iPhone puede ser una carpeta de Drive).',
+    drive: 'Sube directo a Google Drive. Requiere un Client ID propio de Google Cloud y que tu cuenta esté autorizada.',
+  }[settings.dest];
+}
+
+function showSettings() {
+  $('#clientId').value = settings.clientId || '';
+  $('#outSize').value = String(settings.outSize);
+  $('#jpgQ').value = settings.jpgQ;
+  $('#jpgQOut').textContent = settings.jpgQ + '%';
+  $('#autoApply').checked = settings.autoApply;
+  $('#keepOriginal').checked = settings.keepOriginal;
+  $('#sep').value = settings.sep;
+  $('#haptics').checked = settings.haptics;
+  syncDestUI();
+  refreshDriveStatus();
+  showSheet('#sheetSettings');
+}
+
 function bindSettings() {
-  $('#btnSettings').addEventListener('click', () => {
-    $('#clientId').value = settings.clientId || '';
-    $('#outSize').value = String(settings.outSize);
-    $('#jpgQ').value = settings.jpgQ;
-    $('#jpgQOut').textContent = settings.jpgQ + '%';
-    $('#autoApply').checked = settings.autoApply;
-    $('#keepOriginal').checked = settings.keepOriginal;
-    $('#sep').value = settings.sep;
-    $('#haptics').checked = settings.haptics;
-    refreshDriveStatus();
-    showSheet('#sheetSettings');
+  $('#btnSettings').addEventListener('click', showSettings);
+  const folderOpt = $('#dest option[value="folder"]');
+  folderOpt.disabled = !folderSupported;
+  if (!folderSupported) folderOpt.textContent += ' (no disponible en este navegador)';
+  $('#dest').addEventListener('change', (ev) => {
+    settings.dest = ev.target.value;
+    persistSettings();
+    syncDestUI();
+    updateFolderChip();
+    updateQueuePill();
+    loadNameSuggestions();
   });
+  $('#destPick').addEventListener('click', async () => { if (await pickLocalFolder()) syncDestUI(); });
   $('#clientId').addEventListener('change', (ev) => {
     settings.clientId = ev.target.value.trim();
     persistSettings();
@@ -1045,22 +1122,31 @@ function bindSettings() {
   $('#driveConnect').addEventListener('click', () => {
     settings.clientId = $('#clientId').value.trim();
     persistSettings();
-    try { drive.connect(settings.clientId); } catch (err) { toast(err.message, { type: 'error' }); }
+    connectDrive();
   });
   $('#driveDisconnect').addEventListener('click', () => { drive.disconnect(); refreshDriveStatus(); toast('Drive desconectado'); });
 }
 
 /* ================================================================== */
-/* Catálogo (contenido de la carpeta de Drive)                         */
+/* Catálogo (contenido de la carpeta destino)                          */
 /* ================================================================== */
 
 const cat = { stack: [], files: [], folders: [], urls: new Map(), observer: null, active: 0 };
 
 function bindCatalog() {
-  $('#btnCatalog').addEventListener('click', () => {
-    if (needDrive()) return;
-    if (!settings.folder) { openFolderSheet(); return; }
-    cat.stack = [settings.folder];
+  $('#btnCatalog').addEventListener('click', async () => {
+    const t = target();
+    if (!t) return;
+    try {
+      if (t.kind === 'folder') {
+        if (!t.configured() && !await pickLocalFolder()) return;
+        await folderTarget.prepare({ interactive: true });
+      } else {
+        if (!drive.token()) { connectDrive(); return; }
+        if (!settings.folder) { openDriveFolderSheet(); return; }
+      }
+    } catch (err) { toast(err.message, { type: 'error' }); return; }
+    cat.stack = [t.rootNode()];
     stopCamera();
     showView('view-catalog');
     loadCatalog();
@@ -1081,12 +1167,12 @@ async function loadCatalog() {
   $('#catEmpty').textContent = 'Cargando…';
   $('#catEmpty').classList.remove('hidden');
   try {
-    const [folders, files] = await Promise.all([drive.listFolders(cur.id), drive.listImages(cur.id)]);
+    const { folders, files } = await target().list(cur);
     cat.folders = folders;
     cat.files = files;
     renderCatalog();
   } catch (err) {
-    if (err instanceof AuthError) { drive.connect(settings.clientId); return; }
+    if (err instanceof AuthError) { connectDrive(); return; }
     $('#catEmpty').textContent = err.message;
   }
 }
@@ -1116,7 +1202,7 @@ function renderCatalog() {
     d.innerHTML = '<img alt=""><span></span>';
     d.querySelector('span').textContent = f.name;
     d._file = f;
-    const url = cat.urls.get(f.id + f.modifiedTime);
+    const url = cat.urls.get(f.key);
     if (url) d.querySelector('img').src = url; else cat.observer.observe(d);
     d.onclick = () => catalogAction(f);
     grid.append(d);
@@ -1138,10 +1224,10 @@ function pumpCatThumbs() {
     if (!el.isConnected) continue;
     const f = el._file;
     cat.active++;
-    drive.thumbnail(f)
+    f.thumb()
       .then((blob) => {
         const url = URL.createObjectURL(blob);
-        cat.urls.set(f.id + f.modifiedTime, url);
+        cat.urls.set(f.key, url);
         el.querySelector('img').src = url;
       })
       .catch(() => {})
@@ -1150,23 +1236,24 @@ function pumpCatThumbs() {
 }
 
 async function catalogAction(f) {
+  const t = target();
   const k = await actionSheet(f.name, [
     { key: 'edit', label: 'Editar y volver a guardar (reemplaza)' },
     { key: 'copy', label: 'Usar como base para una foto nueva' },
     { key: 'ghost', label: 'Usar como guía fantasma en la cámara' },
-    { key: 'trash', label: 'Mover a la papelera', danger: true },
+    { key: 'trash', label: t.kind === 'drive' ? 'Mover a la papelera' : 'Eliminar', danger: true },
   ]);
   if (!k) return;
   try {
     if (k === 'trash') {
-      if (!await dialog({ title: `¿Eliminar «${f.name}»?`, text: 'Se mueve a la papelera de Drive.', okLabel: 'Eliminar', danger: true })) return;
-      await drive.trash(f.id);
+      const text = t.kind === 'drive' ? 'Se mueve a la papelera de Drive.' : 'Se borra de la carpeta.';
+      if (!await dialog({ title: `¿Eliminar «${f.name}»?`, text, okLabel: 'Eliminar', danger: true })) return;
+      await t.trash(f.id);
       cat.files = cat.files.filter((x) => x.id !== f.id);
       renderCatalog();
       return;
     }
-    toast('Descargando…');
-    const blob = await drive.download(f.id);
+    const blob = await f.blob();
     if (k === 'ghost') {
       if (ghostOverride) URL.revokeObjectURL(ghostOverride);
       ghostOverride = URL.createObjectURL(blob);
@@ -1181,13 +1268,13 @@ async function catalogAction(f) {
     const base = f.name.replace(/\.[^.]+$/, '');
     // La foto del catálogo ya está procesada: arranca sin ediciones.
     const extra = k === 'edit'
-      ? { driveFileId: f.id, driveName: f.name, name: base, edits: cloneEdits() }
+      ? { replace: { kind: t.kind, id: f.id, name: f.name }, name: base, edits: cloneEdits() }
       : { name: base.replace(suffixRegex(), ''), edits: cloneEdits() };
     const p = await addPhoto(b, w, h, extra);
     showView('view-camera');
     openEditor(photos.indexOf(p));
   } catch (err) {
-    if (err instanceof AuthError) { drive.connect(settings.clientId); return; }
+    if (err instanceof AuthError) { connectDrive(); return; }
     toast(err.message, { type: 'error' });
   }
 }
