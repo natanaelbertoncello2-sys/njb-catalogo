@@ -120,12 +120,15 @@ function setupAutoUpdate() {
 
 const isStandalone = () => matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
 const isIOS = () => /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+const isAndroid = () => /Android/i.test(navigator.userAgent);
+const APK_URL = 'descargas/njb-camara.apk';
 let installEvent = null;
 
 function setupInstall() {
   const btn = $('#installBtn');
-  const refresh = () => { btn.hidden = isStandalone() || (!installEvent && !isIOS()); };
+  const refresh = () => { btn.hidden = isStandalone() || (!installEvent && !isIOS() && !isAndroid()); };
   window.addEventListener('beforeinstallprompt', (ev) => { ev.preventDefault(); installEvent = ev; refresh(); offerInstall(); });
+  if (isAndroid()) offerInstall();
   window.addEventListener('appinstalled', () => { installEvent = null; refresh(); toast('¡App instalada! Abrila desde el ícono NJB', { type: 'ok' }); });
   btn.addEventListener('click', installApp);
   refresh();
@@ -144,6 +147,24 @@ function offerInstall() {
 }
 
 async function installApp() {
+  // Android: la app nativa (APK) es la opción principal.
+  if (isAndroid()) {
+    const k = await actionSheet('Instalar NJB Cámara', [
+      { key: 'apk', label: '📦 Descargar app para Android (APK, recomendado)' },
+      ...(installEvent ? [{ key: 'pwa', label: 'Instalar desde Chrome (acceso directo)' }] : []),
+    ]);
+    if (k === 'apk') {
+      location.href = APK_URL;
+      await dialog({
+        title: 'Instalar el APK',
+        text: '1. Abrí el archivo «njb-camara.apk» cuando termine de descargar.\n2. Si Android pregunta, permití «Instalar apps de esta fuente» para Chrome.\n3. Tocá «Instalar».\n\nLa app se actualiza sola: no hace falta volver a descargarla.',
+        okLabel: 'Entendido',
+        noCancel: true,
+      });
+      return;
+    }
+    if (k !== 'pwa') return;
+  }
   if (installEvent) {
     installEvent.prompt();
     await installEvent.userChoice.catch(() => {});
