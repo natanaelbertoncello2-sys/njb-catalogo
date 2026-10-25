@@ -1,7 +1,7 @@
 {
-  "name": "NJB Catálogo",
+  "name": "NJB Cámara",
   "short_name": "NJB",
-  "description": "Fotos de producto para catálogos, con fondo blanco y guardado en Google Drive",
+  "description": "Cámara para fotos de producto: fondo blanco, nombre automático y guardado en tu carpeta",
   "lang": "es",
   "start_url": "./",
   "scope": "./",

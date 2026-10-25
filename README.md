@@ -1,4 +1,4 @@
-# NJB Catálogo (web / iPhone / Android / PC)
+# NJB Cámara (web / iPhone / Android / PC)
 
 App web (PWA) para sacar fotos de producto, dejarlas listas para catálogo y guardarlas con el nombre del producto en la carpeta que cada usuario elija. Cualquiera la puede usar: no necesita cuenta ni configuración.
 
@@ -46,10 +46,10 @@ Alternativa sin cuenta de Git: **Netlify Drop** (https://app.netlify.com/drop) �
 
 No hace falta para usar la app. Solo sirve si querés subir directo a Drive desde el iPhone sin pasar por «Guardar en Archivos». En modo prueba, Google solo deja usarlo a las cuentas agregadas como «usuarios de prueba».
 
-1. Entrá a https://console.cloud.google.com/ y creá un proyecto (por ejemplo «NJB Catálogo»).
+1. Entrá a https://console.cloud.google.com/ y creá un proyecto (por ejemplo «NJB Cámara»).
 2. **APIs y servicios → Biblioteca** → buscar **Google Drive API** → Habilitar.
 3. **APIs y servicios → Pantalla de consentimiento de OAuth**:
-   - Tipo de usuario: **Externo**. Nombre de la app: NJB Catálogo. Tu correo como soporte y contacto.
+   - Tipo de usuario: **Externo**. Nombre de la app: NJB Cámara. Tu correo como soporte y contacto.
    - En **Usuarios de prueba** agregá tu cuenta de Gmail (y la de quien más vaya a usarla).
    - Dejala en modo **Prueba** (no hace falta publicarla ni verificarla para uso propio).
 4. **APIs y servicios → Credenciales → Crear credenciales → ID de cliente de OAuth**:
@@ -59,7 +59,7 @@ No hace falta para usar la app. Solo sirve si querés subir directo a Drive desd
 5. Copiá el **ID de cliente** (`xxxx.apps.googleusercontent.com`) y:
    - pegalo en `js/config.js` (`GOOGLE_CLIENT_ID`) para que quede en todos los dispositivos, **o**
    - pegalo en la app: logo NJB (arriba a la izquierda) → Ajustes → Client ID.
-6. En la app: **Conectar Drive** → elegí tu cuenta → Google avisa «app no verificada» → *Avanzado* → *Ir a NJB Catálogo* → Permitir.
+6. En la app: **Conectar Drive** → elegí tu cuenta → Google avisa «app no verificada» → *Avanzado* → *Ir a NJB Cámara* → Permitir.
 7. Tocá el chip de carpeta (arriba) y elegí la carpeta del catálogo.
 
 La sesión de Google dura 1 hora; después la app redirige sola para renovarla (sin volver a pedir permisos) y continúa con las subidas pendientes.
