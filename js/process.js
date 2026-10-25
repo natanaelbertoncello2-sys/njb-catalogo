@@ -215,7 +215,7 @@ export async function computeAIMaskBlob(geomCanvas, onProgress) {
   const lib = await loadAI();
   const input = await canvasToBlob(downscaled(geomCanvas, 1024), 'image/png');
   return lib.segmentForeground(input, {
-    model: 'isnet_fp16',
+    model: 'isnet_quint8',
     output: { format: 'image/png' },
     progress: (key, cur, total) => onProgress?.(key, cur, total),
   });

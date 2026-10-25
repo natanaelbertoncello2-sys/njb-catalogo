@@ -23,7 +23,7 @@ Es HTML/CSS/JS puro: no requiere compilación. Cualquier hosting estático con H
 - **Cámara del iPhone (HQ)**: abre la cámara nativa de iOS para máxima calidad (HDR, etc.). También se pueden **importar** fotos del carrete.
 - **Edición no destructiva**: todo se recalcula desde la foto original, así que siempre se puede volver atrás.
   - **Fondo liso**: borra fondos claros u oscuros uniformes, incluidas sombras suaves y degradés. Con la **varita** se tocan los huecos interiores (por ejemplo, el asa de una taza).
-  - **IA**: borra cualquier fondo (descarga ~95 MB la primera vez y después queda guardado en el dispositivo).
+  - **IA**: borra cualquier fondo (descarga ~55 MB la primera vez y después queda guardado en el dispositivo).
   - Color de fondo, sombra suave bajo el producto, **centrado automático** con margen uniforme, proporciones 1:1 / 4:5 / 3:4 / 4:3.
   - Rotar, espejo, enderezar, recorte manual.
   - Auto mejorar (niveles + balance de blancos), exposición, contraste, saturación, temperatura y nitidez.
