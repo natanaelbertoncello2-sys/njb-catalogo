@@ -77,7 +77,7 @@ Abrí la URL en **Safari** → botón Compartir → **Agregar a pantalla de inic
 
 ## Actualizar la app
 
-Al cambiar archivos, subí el número de versión en `js/config.js` y en `sw.js` (`VERSION`) para que el iPhone descargue la versión nueva.
+Subí el número `APP_VERSION` en `js/config.js` y publicá (git push). Las apps ya instaladas lo detectan al abrirse o al volver a ellas, se recargan solas cuando no hay nada en curso y muestran «App actualizada a la versión X». `sw.js` no hace falta tocarlo.
 
 ## Privacidad
 

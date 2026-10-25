@@ -77,11 +77,98 @@ async function init() {
   startCamera();
 
   if ('serviceWorker' in navigator && location.protocol === 'https:') {
-    navigator.serviceWorker.register('sw.js').catch(() => {});
+    navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' }).catch(() => {});
   }
+  setupAutoUpdate();
+  setupInstall();
 
   if (photos.some((p) => p.status === 'queued')) processQueue();
   loadNameSuggestions();
+}
+
+/* ================================================================== */
+/* Actualización automática e instalación                              */
+/* ================================================================== */
+
+// Al volver a la app (o cada 30 min) se compara la versión publicada con la que está corriendo.
+// Si hay una nueva, se recarga sola apenas no haya nada en curso (guardado, edición, temporizador).
+function setupAutoUpdate() {
+  const prev = localStorage.getItem('njb-version');
+  if (prev && prev !== APP_VERSION) toast(`App actualizada a la versión ${APP_VERSION}`, { type: 'ok' });
+  localStorage.setItem('njb-version', APP_VERSION);
+
+  let pending = false;
+  const safeToReload = () => !uploading && !shooting && !ed.photo && $('#dialog').classList.contains('hidden')
+    && $('#view-camera').classList.contains('active');
+  const tryReload = () => {
+    if (!pending) return;
+    if (safeToReload()) location.reload();
+    else setTimeout(tryReload, 3000);
+  };
+  const check = async () => {
+    if (pending || !navigator.onLine) return;
+    try {
+      const txt = await (await fetch('js/config.js', { cache: 'no-store' })).text();
+      const remote = txt.match(/APP_VERSION\s*=\s*'([^']+)'/)?.[1];
+      if (remote && remote !== APP_VERSION) { pending = true; tryReload(); }
+    } catch { /* sin conexión */ }
+  };
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) check(); });
+  setInterval(check, 30 * 60 * 1000);
+  setTimeout(check, 5000);
+}
+
+const isStandalone = () => matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
+const isIOS = () => /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+let installEvent = null;
+
+function setupInstall() {
+  const btn = $('#installBtn');
+  const refresh = () => { btn.hidden = isStandalone() || (!installEvent && !isIOS()); };
+  window.addEventListener('beforeinstallprompt', (ev) => { ev.preventDefault(); installEvent = ev; refresh(); offerInstall(); });
+  window.addEventListener('appinstalled', () => { installEvent = null; refresh(); toast('¡App instalada! Abrila desde el ícono NJB', { type: 'ok' }); });
+  btn.addEventListener('click', installApp);
+  refresh();
+  if (isIOS()) offerInstall();
+}
+
+// Sugerencia única (por día) de instalar, si todavía se usa desde el navegador.
+function offerInstall() {
+  if (isStandalone()) return;
+  // No tapar otro aviso (p. ej. «App actualizada»): reintentar más tarde.
+  if (!$('#toast').classList.contains('hidden')) { setTimeout(offerInstall, 4000); return; }
+  const last = Number(localStorage.getItem('njb-install-offer') || 0);
+  if (Date.now() - last < 24 * 3600 * 1000) return;
+  localStorage.setItem('njb-install-offer', String(Date.now()));
+  toast('Instalá NJB como app en tu pantalla de inicio', { action: installApp, actionLabel: 'Instalar', ms: 8000 });
+}
+
+async function installApp() {
+  if (installEvent) {
+    installEvent.prompt();
+    await installEvent.userChoice.catch(() => {});
+    installEvent = null;
+    $('#installBtn').hidden = true;
+    return;
+  }
+  if (isIOS()) {
+    const safari = !/CriOS|FxiOS|EdgiOS/.test(navigator.userAgent);
+    await dialog({
+      title: 'Instalar en iPhone',
+      text: safari
+        ? '1. Tocá el botón Compartir (cuadrado con flecha ↑) abajo en Safari.\n2. Elegí «Agregar a pantalla de inicio».\n3. Tocá «Agregar».\n\nLa app queda con su ícono y se actualiza sola.'
+        : 'Abrí este mismo link en Safari para poder instalarla:\nCompartir → «Agregar a pantalla de inicio».',
+      okLabel: 'Entendido',
+      noCancel: true,
+    });
+    return;
+  }
+  await dialog({
+    title: 'Instalar app',
+    text: 'En el menú del navegador (⋮) elegí «Instalar app» o «Agregar a pantalla principal».',
+    okLabel: 'Entendido',
+    noCancel: true,
+  });
 }
 
 /* ================================================================== */
