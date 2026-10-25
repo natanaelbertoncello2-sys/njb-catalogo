@@ -1,0 +1,70 @@
+# NJB Catálogo (web / iPhone)
+
+App web (PWA) para sacar fotos de producto, dejarlas listas para catálogo y guardarlas directo en una carpeta de Google Drive con el nombre del producto.
+
+Es HTML/CSS/JS puro: no requiere compilación. Cualquier hosting estático con HTTPS sirve.
+
+## Qué hace
+
+- **Cámara en vivo** (trasera, máxima resolución) con grilla, guía 1:1, nivel, «fantasma» (superpone la foto anterior para mantener el mismo encuadre en todo el catálogo), temporizador de 3 s, ráfaga, linterna y zoom (si el iPhone lo permite).
+- **Cámara del iPhone (HQ)**: abre la cámara nativa de iOS para máxima calidad (HDR, etc.). También se pueden **importar** fotos del carrete.
+- **Edición no destructiva**: todo se recalcula desde la foto original, así que siempre se puede volver atrás.
+  - **Fondo liso**: borra fondos claros u oscuros uniformes, incluidas sombras suaves y degradés. Con la **varita** se tocan los huecos interiores (por ejemplo, el asa de una taza).
+  - **IA**: borra cualquier fondo (descarga un modelo de ~40 MB la primera vez y después queda en caché).
+  - Color de fondo, sombra suave bajo el producto, **centrado automático** con margen uniforme, proporciones 1:1 / 4:5 / 3:4 / 4:3.
+  - Rotar, espejo, enderezar, recorte manual.
+  - Auto mejorar (niveles + balance de blancos), exposición, contraste, saturación, temperatura y nitidez.
+  - **Aplicar a todas** y **Usar por defecto** (cada foto nueva sale con ese estilo).
+- **Guardado en Drive**: `PRODUCTO.jpg`, `PRODUCTO_1.jpg`, `PRODUCTO_2.jpg`… sin pisar archivos existentes. Botón **Deshacer** (manda lo subido a la papelera y devuelve las fotos a la bandeja). Opción de guardar también el original en la subcarpeta `originales`.
+- **Catálogo**: explora la carpeta de Drive con miniaturas y buscador. Cada foto se puede re-editar (reemplaza el archivo), usar como base, usar como guía fantasma o mandar a la papelera.
+- **No se pierde nada**: las fotos sin guardar quedan en el teléfono (IndexedDB) aunque Safari se cierre. Si se corta internet o vence la sesión de Google, quedan en cola y se reintentan.
+- **Sin Drive**: si no configurás el Client ID, «Guardar» abre el menú Compartir de iOS (Guardar en Archivos → Drive).
+
+## 1. Publicarla (HTTPS obligatorio para la cámara)
+
+Opción simple — **GitHub Pages**:
+
+1. Crear un repositorio (puede ser privado con GitHub Pro, o público) y subir el contenido de esta carpeta `catalogo_web/`.
+2. Settings → Pages → Deploy from branch → `main` / root.
+3. La URL queda tipo `https://TU_USUARIO.github.io/njb-catalogo/`.
+
+Alternativa sin cuenta de Git: **Netlify Drop** (https://app.netlify.com/drop) — arrastrás la carpeta `catalogo_web` y listo.
+
+## 2. Conectar Google Drive (una sola vez, ~5 minutos)
+
+1. Entrá a https://console.cloud.google.com/ y creá un proyecto (por ejemplo «NJB Catálogo»).
+2. **APIs y servicios → Biblioteca** → buscar **Google Drive API** → Habilitar.
+3. **APIs y servicios → Pantalla de consentimiento de OAuth**:
+   - Tipo de usuario: **Externo**. Nombre de la app: NJB Catálogo. Tu correo como soporte y contacto.
+   - En **Usuarios de prueba** agregá tu cuenta de Gmail (y la de quien más vaya a usarla).
+   - Dejala en modo **Prueba** (no hace falta publicarla ni verificarla para uso propio).
+4. **APIs y servicios → Credenciales → Crear credenciales → ID de cliente de OAuth**:
+   - Tipo: **Aplicación web**.
+   - **Orígenes de JavaScript autorizados**: la URL base, por ejemplo `https://TU_USUARIO.github.io`
+   - **URI de redireccionamiento autorizados**: la URL exacta de la app, por ejemplo `https://TU_USUARIO.github.io/njb-catalogo/` (con la barra final).
+5. Copiá el **ID de cliente** (`xxxx.apps.googleusercontent.com`) y:
+   - pegalo en `js/config.js` (`GOOGLE_CLIENT_ID`) para que quede en todos los dispositivos, **o**
+   - pegalo en la app: logo NJB (arriba a la izquierda) → Ajustes → Client ID.
+6. En la app: **Conectar Drive** → elegí tu cuenta → Google avisa «app no verificada» → *Avanzado* → *Ir a NJB Catálogo* → Permitir.
+7. Tocá el chip de carpeta (arriba) y elegí la carpeta del catálogo.
+
+La sesión de Google dura 1 hora; después la app redirige sola para renovarla (sin volver a pedir permisos) y continúa con las subidas pendientes.
+
+## 3. Instalarla en el iPhone
+
+Abrí la URL en **Safari** → botón Compartir → **Agregar a pantalla de inicio**. Queda con ícono propio y a pantalla completa.
+
+## Flujo recomendado para catálogo
+
+1. Fondo liso (cartulina blanca o gris), buena luz pareja.
+2. Primera foto → editor → Fondo liso, 1:1, centrado, margen → **Usar por defecto**.
+3. Escribí el nombre del producto → sacá las fotos → cambiá el nombre → siguiente producto…
+4. **Guardar**: todo sube a Drive ya procesado y numerado.
+
+## Actualizar la app
+
+Al cambiar archivos, subí el número de versión en `js/config.js` y en `sw.js` (`VERSION`) para que el iPhone descargue la versión nueva.
+
+## Privacidad
+
+Las fotos se procesan en el teléfono. Solo salen hacia tu Google Drive (y, si usás el modo IA, la app descarga el modelo desde el CDN de IMG.LY; las fotos no se envían a ningún servidor). La librería de IA (`@imgly/background-removal`) tiene licencia AGPL: uso personal/interno sin problema.

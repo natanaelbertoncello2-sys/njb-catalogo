@@ -1,0 +1,283 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+  <meta name="theme-color" content="#0a0e17">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="NJB Catálogo">
+  <title>NJB Catálogo</title>
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icons/icon-192.png">
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+  <link rel="stylesheet" href="css/app.css">
+</head>
+<body>
+  <!-- ============ CÁMARA ============ -->
+  <section id="view-camera" class="view active">
+    <div class="cam-stage" id="camStage">
+      <video id="video" playsinline muted autoplay></video>
+      <div class="overlay" id="overlay">
+        <img id="ghost" class="ghost hidden" alt="">
+        <div id="grid" class="grid hidden"><i></i><i></i><i></i><i></i></div>
+        <div id="frameGuide" class="frame-guide hidden"></div>
+        <div id="level" class="level"><span></span></div>
+      </div>
+      <div id="countdown" class="countdown hidden"></div>
+      <div id="flashFx" class="flash-fx"></div>
+      <div id="camMsg" class="cam-msg hidden">
+        <p>No se pudo abrir la cámara.</p>
+        <p class="muted">Podés usar la cámara del iPhone o importar fotos con los botones de abajo.</p>
+        <button class="btn" id="retryCam">Reintentar</button>
+      </div>
+    </div>
+
+    <header class="topbar">
+      <button class="brand" id="btnSettings" aria-label="Ajustes">
+        <img src="icons/icon-192.png" alt=""><span>NJB</span>
+      </button>
+      <button class="folder-chip" id="btnFolder">
+        <svg viewBox="0 0 24 24"><path d="M10 4H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-8l-2-2z"/></svg>
+        <span id="folderName">Elegir carpeta</span>
+      </button>
+      <div class="top-actions">
+        <button class="icon-btn" id="btnTorch" aria-label="Linterna" hidden><svg viewBox="0 0 24 24"><path d="M7 2v11h3v9l7-12h-4l4-8z"/></svg></button>
+        <button class="icon-btn" id="btnCatalog" aria-label="Catálogo"><svg viewBox="0 0 24 24"><path d="M4 4h7v7H4zM13 4h7v7h-7zM4 13h7v7H4zM13 13h7v7h-7z"/></svg></button>
+      </div>
+    </header>
+
+    <div class="cam-tools">
+      <button class="tool" data-toggle="grid">Grilla</button>
+      <button class="tool" data-toggle="square">1:1</button>
+      <button class="tool" data-toggle="ghost">Fantasma</button>
+      <button class="tool" data-toggle="timer">3 s</button>
+      <button class="tool" data-toggle="burst">Ráfaga</button>
+      <div class="zoom" id="zoomBox" hidden></div>
+    </div>
+
+    <footer class="cam-bottom">
+      <div class="tray" id="tray"></div>
+      <div class="name-row">
+        <input id="productName" type="text" placeholder="Nombre del producto" autocomplete="off" autocapitalize="characters" enterkeyhint="done" list="nameSuggestions">
+        <datalist id="nameSuggestions"></datalist>
+        <button class="icon-btn" id="btnRandomName" aria-label="Nombre automático"><svg viewBox="0 0 24 24"><path d="M4 4h16v16H4z" fill="none" stroke="currentColor" stroke-width="2"/><circle cx="9" cy="9" r="1.5"/><circle cx="15" cy="15" r="1.5"/><circle cx="15" cy="9" r="1.5"/><circle cx="9" cy="15" r="1.5"/></svg></button>
+      </div>
+      <div class="shutter-row">
+        <div class="side">
+          <label class="round-btn" aria-label="Importar fotos">
+            <input type="file" id="pickGallery" accept="image/*" multiple hidden>
+            <svg viewBox="0 0 24 24"><path d="M21 19V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2zM8.5 13.5l2.5 3 3.5-4.5 4.5 6H5l3.5-4.5z"/></svg>
+          </label>
+          <label class="round-btn" aria-label="Cámara del iPhone (máxima calidad)">
+            <input type="file" id="pickNative" accept="image/*" capture="environment" hidden>
+            <svg viewBox="0 0 24 24"><path d="M9 3 7.2 5H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-3.2L15 3H9zm3 15a5 5 0 1 1 0-10 5 5 0 0 1 0 10zm0-2a3 3 0 1 0 0-6 3 3 0 0 0 0 6z"/><text x="17" y="22" font-size="7" font-weight="700">HQ</text></svg>
+          </label>
+        </div>
+        <button class="shutter" id="btnShutter" aria-label="Tomar foto"><span></span></button>
+        <div class="side">
+          <button class="round-btn save" id="btnSave" aria-label="Guardar" disabled>
+            <svg viewBox="0 0 24 24"><path d="M19 13v6H5v-6H3v6a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-6h-2zm-6 .7 2.6-2.6 1.4 1.4-5 5-5-5 1.4-1.4 2.6 2.6V3h2z" transform="rotate(180 12 12)"/></svg>
+            <b id="saveCount"></b>
+          </button>
+        </div>
+      </div>
+    </footer>
+  </section>
+
+  <!-- ============ EDITOR ============ -->
+  <section id="view-editor" class="view">
+    <header class="topbar solid">
+      <button class="icon-btn" id="edClose" aria-label="Cerrar"><svg viewBox="0 0 24 24"><path d="M19 6.4 17.6 5 12 10.6 6.4 5 5 6.4 10.6 12 5 17.6 6.4 19 12 13.4 17.6 19 19 17.6 13.4 12z"/></svg></button>
+      <div class="ed-title"><span id="edIndex"></span><input id="edName" type="text" placeholder="Nombre" autocapitalize="characters"></div>
+      <div class="top-actions">
+        <button class="icon-btn" id="edCompare" aria-label="Ver original (mantener)"><svg viewBox="0 0 24 24"><path d="M10 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h5v2h2V1h-2v2zm0 15H5l5-6v6zm9-15h-5v2h5v13l-5-6v9h5a2 2 0 0 0 2-2V5a2 2 0 0 0-2-2z"/></svg></button>
+        <button class="icon-btn danger" id="edDelete" aria-label="Eliminar"><svg viewBox="0 0 24 24"><path d="M6 19a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/></svg></button>
+      </div>
+    </header>
+    <div class="ed-stage" id="edStage">
+      <canvas id="edCanvas"></canvas>
+      <canvas id="edCropCanvas" class="crop-layer hidden"></canvas>
+      <div class="ed-busy hidden" id="edBusy"><div class="spinner"></div><span id="edBusyText">Procesando…</span></div>
+      <button class="nav prev" id="edPrev" aria-label="Anterior">‹</button>
+      <button class="nav next" id="edNext" aria-label="Siguiente">›</button>
+    </div>
+    <div class="ed-panel">
+      <nav class="tabs" id="edTabs">
+        <button data-tab="fondo" class="active">Fondo</button>
+        <button data-tab="encuadre">Encuadre</button>
+        <button data-tab="luz">Luz y color</button>
+        <button data-tab="recorte">Recorte</button>
+      </nav>
+
+      <div class="tab-body" data-body="fondo">
+        <div class="seg" id="bgMode">
+          <button data-v="none">Original</button>
+          <button data-v="auto">Fondo liso</button>
+          <button data-v="ai">IA</button>
+        </div>
+        <div class="row-ctrl" data-show="auto">
+          <label>Tolerancia</label><input type="range" id="bgTol" min="4" max="120" step="1"><output></output>
+        </div>
+        <div class="row-ctrl" data-show="auto ai">
+          <label>Suavizar borde</label><input type="range" id="bgFeather" min="0" max="8" step="1"><output></output>
+        </div>
+        <div class="row-ctrl" data-show="auto ai">
+          <label>Color fondo</label>
+          <div class="swatches" id="bgColors">
+            <button data-c="#ffffff" style="--c:#fff"></button>
+            <button data-c="#f2f2f2" style="--c:#f2f2f2"></button>
+            <button data-c="#e9e4dc" style="--c:#e9e4dc"></button>
+            <button data-c="#000000" style="--c:#000"></button>
+            <label class="swatch-pick" style="--c:conic-gradient(red,yellow,lime,cyan,blue,magenta,red)"><input type="color" id="bgCustom"></label>
+          </div>
+        </div>
+        <div class="row-ctrl" data-show="auto ai">
+          <label>Sombra suave</label><input type="range" id="shadow" min="0" max="100" step="5"><output></output>
+        </div>
+        <div class="row-btns" data-show="auto">
+          <button class="btn ghost-btn" id="wandBtn">Varita: tocar zona a borrar</button>
+          <button class="btn ghost-btn" id="wandUndo">Deshacer toque</button>
+        </div>
+        <p class="hint" data-show="ai">La IA descarga un modelo (~40 MB) la primera vez. Funciona con cualquier fondo.</p>
+      </div>
+
+      <div class="tab-body hidden" data-body="encuadre">
+        <div class="seg" id="aspect">
+          <button data-v="orig">Original</button>
+          <button data-v="1">1:1</button>
+          <button data-v="0.8">4:5</button>
+          <button data-v="0.75">3:4</button>
+          <button data-v="1.333">4:3</button>
+        </div>
+        <label class="check"><input type="checkbox" id="autoCenter"> Centrar producto automáticamente</label>
+        <div class="row-ctrl" data-show-center>
+          <label>Margen</label><input type="range" id="margin" min="0" max="35" step="1"><output></output>
+        </div>
+        <div class="row-btns">
+          <button class="btn ghost-btn" id="rotL">⟲ 90°</button>
+          <button class="btn ghost-btn" id="rotR">⟳ 90°</button>
+          <button class="btn ghost-btn" id="flipH">Espejo</button>
+        </div>
+        <div class="row-ctrl">
+          <label>Enderezar</label><input type="range" id="straighten" min="-15" max="15" step="0.5"><output></output>
+        </div>
+      </div>
+
+      <div class="tab-body hidden" data-body="luz">
+        <div class="row-btns"><button class="btn ghost-btn" id="autoLevels">Auto mejorar</button><button class="btn ghost-btn" id="resetLight">Restablecer</button></div>
+        <div class="row-ctrl"><label>Exposición</label><input type="range" id="exposure" min="-100" max="100" step="1"><output></output></div>
+        <div class="row-ctrl"><label>Contraste</label><input type="range" id="contrast" min="-100" max="100" step="1"><output></output></div>
+        <div class="row-ctrl"><label>Saturación</label><input type="range" id="saturation" min="-100" max="100" step="1"><output></output></div>
+        <div class="row-ctrl"><label>Temperatura</label><input type="range" id="warmth" min="-100" max="100" step="1"><output></output></div>
+        <div class="row-ctrl"><label>Nitidez</label><input type="range" id="sharpen" min="0" max="100" step="5"><output></output></div>
+      </div>
+
+      <div class="tab-body hidden" data-body="recorte">
+        <p class="hint">Arrastrá las esquinas o el centro del recuadro. Se aplica antes del fondo y el encuadre.</p>
+        <div class="row-btns">
+          <button class="btn ghost-btn" id="cropEdit">Editar recorte</button>
+          <button class="btn ghost-btn" id="cropReset">Quitar recorte</button>
+        </div>
+      </div>
+
+      <div class="ed-actions">
+        <button class="btn ghost-btn" id="edApplyAll">Aplicar a todas</button>
+        <button class="btn ghost-btn" id="edSaveDefault">Usar por defecto</button>
+        <button class="btn primary" id="edDone">Listo</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ CATÁLOGO (DRIVE) ============ -->
+  <section id="view-catalog" class="view">
+    <header class="topbar solid">
+      <button class="icon-btn" id="catClose" aria-label="Volver"><svg viewBox="0 0 24 24"><path d="M20 11H7.8l5.6-5.6L12 4l-8 8 8 8 1.4-1.4L7.8 13H20z"/></svg></button>
+      <div class="ed-title"><span id="catTitle">Catálogo</span></div>
+      <div class="top-actions">
+        <button class="icon-btn" id="catRefresh" aria-label="Actualizar"><svg viewBox="0 0 24 24"><path d="M17.7 6.3A8 8 0 1 0 19.7 14h-2.1a6 6 0 1 1-1.4-6.2L13 11h7V4l-2.3 2.3z"/></svg></button>
+      </div>
+    </header>
+    <div class="cat-search"><input type="search" id="catSearch" placeholder="Buscar producto…"></div>
+    <div class="cat-grid" id="catGrid"></div>
+    <p class="cat-empty hidden" id="catEmpty"></p>
+  </section>
+
+  <!-- ============ HOJAS / DIÁLOGOS ============ -->
+  <div class="sheet-backdrop hidden" id="sheetBackdrop"></div>
+
+  <div class="sheet hidden" id="sheetFolder">
+    <div class="sheet-head"><b>Carpeta de Drive</b><button class="icon-btn" data-close>✕</button></div>
+    <div class="crumbs" id="folderCrumbs"></div>
+    <ul class="folder-list" id="folderList"></ul>
+    <div class="sheet-foot">
+      <button class="btn ghost-btn" id="folderNew">Nueva carpeta</button>
+      <button class="btn primary" id="folderChoose">Usar esta carpeta</button>
+    </div>
+  </div>
+
+  <div class="sheet hidden" id="sheetSettings">
+    <div class="sheet-head"><b>Ajustes</b><button class="icon-btn" data-close>✕</button></div>
+    <div class="sheet-body">
+      <h4>Google Drive</h4>
+      <p class="muted" id="driveStatus">No conectado</p>
+      <div class="row-btns">
+        <button class="btn primary" id="driveConnect">Conectar Drive</button>
+        <button class="btn ghost-btn" id="driveDisconnect">Desconectar</button>
+      </div>
+      <label class="field">Client ID de Google (OAuth)
+        <input type="text" id="clientId" placeholder="xxxxxxxx.apps.googleusercontent.com" autocomplete="off" autocapitalize="off" spellcheck="false">
+      </label>
+
+      <h4>Exportación</h4>
+      <label class="field">Tamaño máximo (lado largo)
+        <select id="outSize">
+          <option value="1200">1200 px (web liviana)</option>
+          <option value="1600">1600 px</option>
+          <option value="2048">2048 px (recomendado)</option>
+          <option value="3000">3000 px</option>
+          <option value="0">Original</option>
+        </select>
+      </label>
+      <label class="field">Calidad JPG <span id="jpgQOut"></span>
+        <input type="range" id="jpgQ" min="60" max="100" step="1">
+      </label>
+      <label class="check"><input type="checkbox" id="autoApply"> Aplicar el estilo por defecto a cada foto nueva</label>
+      <label class="check"><input type="checkbox" id="keepOriginal"> Guardar también la foto original (subcarpeta «originales»)</label>
+      <label class="field">Separador de numeración
+        <select id="sep">
+          <option value="_">PRODUCTO_1.jpg</option>
+          <option value="-">PRODUCTO-1.jpg</option>
+          <option value=" ">PRODUCTO 1.jpg</option>
+        </select>
+      </label>
+
+      <h4>Cámara</h4>
+      <label class="check"><input type="checkbox" id="haptics"> Vibrar al estar nivelado</label>
+
+      <h4>Sin Drive</h4>
+      <p class="muted">Si no configurás Drive, al guardar se abre el menú Compartir del iPhone («Guardar en Archivos» → carpeta de Drive).</p>
+      <p class="muted small" id="appVersion"></p>
+    </div>
+  </div>
+
+  <div class="dialog hidden" id="dialog">
+    <div class="dialog-card">
+      <h3 id="dlgTitle"></h3>
+      <p id="dlgText" class="muted"></p>
+      <input id="dlgInput" type="text" class="hidden" autocapitalize="characters">
+      <div class="dialog-btns">
+        <button class="btn ghost-btn" id="dlgCancel">Cancelar</button>
+        <button class="btn primary" id="dlgOk">Aceptar</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="toast hidden" id="toast"><span id="toastText"></span><button id="toastAction" class="hidden"></button></div>
+  <div class="queue-pill hidden" id="queuePill"></div>
+
+  <canvas id="workCanvas" hidden></canvas>
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>
