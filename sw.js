@@ -4,7 +4,7 @@ const CACHE = 'njb-app';
 const SHELL = [
   './', 'index.html', 'manifest.webmanifest', 'css/app.css',
   'js/app.js', 'js/ui.js', 'js/db.js', 'js/drive.js', 'js/camera.js', 'js/render.js', 'js/process.js', 'js/config.js', 'js/targets.js',
-  'icons/icon-192.png', 'icons/icon-512.png', 'icons/apple-touch-icon.png',
+  'icons/icon-192.png', 'icons/icon-512.png', 'icons/icon-maskable-512.png', 'icons/apple-touch-icon.png',
 ];
 
 self.addEventListener('install', (ev) => {
