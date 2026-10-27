@@ -1,18 +1,21 @@
 import { $, $$, toast, dialog, showSheet, closeSheet, showView, actionSheet, debounce, uid } from './ui.js';
-import { db, loadSettings, saveSettings } from './db.js';
+import { db, outbox, loadSettings, saveSettings } from './db.js';
 import { drive, AuthError, uniqueName, cleanName } from './drive.js';
 import { Camera } from './camera.js';
 import { Renderer } from './render.js';
 import { BASE_EDITS, cloneEdits, normalizeImport } from './process.js';
 import { GOOGLE_CLIENT_ID, APP_VERSION } from './config.js';
-import { folderTarget, folderSupported, makeDriveTarget, NeedsGesture } from './targets.js';
+import { folderTarget, folderSupported, makeDriveTarget, sharedTarget, NeedsGesture } from './targets.js';
+import { uploadShared } from './shared.js';
+import { stitchPanorama, warmPanorama } from './pano.js';
 
 /* ================================================================== */
 /* Estado                                                              */
 /* ================================================================== */
 
 const settings = loadSettings({
-  dest: folderSupported ? 'folder' : 'share', // 'folder' | 'share' | 'drive'
+  dest: folderSupported ? 'folder' : 'share', // 'folder' | 'share' | 'drive' | 'shared'
+  alsoShared: false,       // además del destino, subir una copia a «Fotos compartidas»
   clientId: GOOGLE_CLIENT_ID,
   folder: null,            // carpeta de Drive {id, name}
   outSize: 2048,
@@ -22,21 +25,26 @@ const settings = loadSettings({
   sep: '_',
   haptics: true,
   defaultEdits: { ...BASE_EDITS, bg: 'auto', aspect: '1', autoCenter: true, margin: 8 },
-  tools: { grid: false, square: false, ghost: false, timer: false, burst: false },
+  tools: { grid: false, square: false, ghost: false, timer: false, burst: false, pano: false },
 });
+settings.tools.pano ??= false;
 if (!settings.clientId && GOOGLE_CLIENT_ID) settings.clientId = GOOGLE_CLIENT_ID;
 if (settings.dest === 'folder' && !folderSupported) settings.dest = 'share';
 const persistSettings = () => saveSettings(settings);
 
 const driveTarget = makeDriveTarget(settings);
 // Destino actual (null = «Guardar en Archivos» / Compartir).
-const target = () => (settings.dest === 'folder' ? folderTarget : settings.dest === 'drive' ? driveTarget : null);
+const TARGETS = { folder: folderTarget, drive: driveTarget, shared: sharedTarget };
+const target = () => TARGETS[settings.dest] || null;
 
 let photos = [];              // fotos de la sesión (aún no guardadas)
 const thumbUrls = new Map();  // id → objectURL
 let uploading = false;
 let lastBatch = null;         // para «Deshacer»
 let ghostOverride = null;     // URL de una foto del catálogo usada como fantasma
+let panoFrames = [];          // fotos de la panorámica en curso (solo en memoria)
+let panoBusy = false;
+let panoStep = '';
 
 const renderer = new Renderer({
   onAIMask: async (photo, key, blob) => {
@@ -71,10 +79,13 @@ async function init() {
   bindFolderSheet();
   bindSettings();
   bindCatalog();
+  bindPano();
   applyToolState();
   renderTray();
   updateFolderChip();
   startCamera();
+  loadOutbox();
+  window.addEventListener('online', () => { processQueue(); pumpOutbox(); });
 
   if ('serviceWorker' in navigator && location.protocol === 'https:') {
     navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' }).catch(() => {});
@@ -98,7 +109,8 @@ function setupAutoUpdate() {
   localStorage.setItem('njb-version', APP_VERSION);
 
   let pending = false;
-  const safeToReload = () => !uploading && !shooting && !ed.photo && $('#dialog').classList.contains('hidden')
+  const safeToReload = () => !uploading && !shooting && !encoding && !panoBusy && !panoFrames.length && !ed.photo
+    && $('#dialog').classList.contains('hidden')
     && $('#view-camera').classList.contains('active');
   const tryReload = () => {
     if (!pending) return;
@@ -251,6 +263,7 @@ function applyToolState() {
   $('#grid').classList.toggle('hidden', !t.grid);
   $('#frameGuide').classList.toggle('hidden', !t.square);
   updateGhost();
+  updatePanoBar();
 }
 
 function updateGhost() {
@@ -284,7 +297,27 @@ function onOrientation(ev) {
   wasLevel = ok;
 }
 
+// El obturador solo congela el cuadro (instantáneo); la codificación a JPG va en una cola
+// aparte y en orden, así se pueden sacar fotos seguidas sin esperar.
 let shooting = false;
+let encoding = 0;
+let encodeChain = Promise.resolve();
+
+function queueEncode(frame, pano) {
+  encoding++;
+  encodeChain = encodeChain.then(async () => {
+    try {
+      const { blob, w, h } = await camera.encode(frame);
+      if (pano) { frame.close?.(); addPanoFrame(blob, w, h); }
+      else await addPhoto(blob, w, h, {}, frame);
+    } catch (err) {
+      toast('Error al capturar: ' + err.message, { type: 'error' });
+    } finally {
+      encoding--;
+    }
+  });
+}
+
 async function shoot() {
   if (shooting) return;
   if (!camera.active) { $('#pickNative').click(); return; }
@@ -297,13 +330,14 @@ async function shoot() {
       for (let i = 3; i > 0; i--) { cd.textContent = i; await new Promise((r) => setTimeout(r, 1000)); }
       cd.classList.add('hidden');
     }
+    // Si se acumulan muchas sin codificar, esperamos un poco (cuida la memoria del celular).
+    if (encoding >= 3) await encodeChain;
     const shots = settings.tools.burst ? 3 : 1;
     for (let i = 0; i < shots; i++) {
       const fx = $('#flashFx');
       fx.classList.remove('go'); void fx.offsetWidth; fx.classList.add('go');
-      const { blob, w, h } = await camera.capture();
-      await addPhoto(blob, w, h);
-      if (i < shots - 1) await new Promise((r) => setTimeout(r, 350));
+      queueEncode(await camera.grab(), settings.tools.pano);
+      if (i < shots - 1) await new Promise((r) => setTimeout(r, 200));
     }
   } catch (err) {
     toast('Error al capturar: ' + err.message, { type: 'error' });
@@ -328,7 +362,8 @@ async function importFiles(files) {
   if (n > 1) toast(`${n} fotos añadidas`);
 }
 
-async function addPhoto(blob, w, h, extra = {}) {
+// frame (opcional): el cuadro ya decodificado, para que la miniatura no tenga que volver a leer el JPG.
+async function addPhoto(blob, w, h, extra = {}, frame = null) {
   const edits = settings.autoApply ? cloneEdits(settings.defaultEdits) : cloneEdits();
   if (settings.tools.square && !settings.autoApply) edits.aspect = '1';
   const photo = {
@@ -336,10 +371,60 @@ async function addPhoto(blob, w, h, extra = {}) {
     blob, w, h, edits, status: 'new', ...extra,
   };
   photos.push(photo);
-  await db.put(photo).catch((err) => toast('Sin espacio para guardar la foto: ' + err.message, { type: 'error' }));
+  if (frame) renderer.bitmaps.set(photo.id, frame);
+  // Se guarda en segundo plano: la foto ya está en la bandeja.
+  db.put(photo).catch((err) => toast('Sin espacio para guardar la foto: ' + err.message, { type: 'error' }));
   renderTray();
   refreshThumb(photo);
   return photo;
+}
+
+/* ---------- panorámica ---------- */
+
+function addPanoFrame(blob, w, h) {
+  panoFrames.push({ blob, w, h });
+  updatePanoBar();
+}
+
+function updatePanoBar() {
+  const n = panoFrames.length;
+  $('#panoBar').classList.toggle('hidden', !settings.tools.pano && !n && !panoBusy);
+  $('#panoText').textContent = panoBusy ? panoStep
+    : n ? `Panorámica · ${n} foto${n > 1 ? 's' : ''}${n < 2 ? ' (mínimo 2)' : ''}`
+    : 'Panorámica: mové el celu de a poco, superponiendo 30-50%';
+  $('#panoJoin').disabled = panoBusy || n < 2;
+  $('#panoCancel').hidden = panoBusy || !n;
+}
+
+async function joinPanorama() {
+  if (panoBusy || panoFrames.length < 2) return;
+  const frames = panoFrames;
+  panoFrames = [];
+  panoBusy = true;
+  panoStep = 'Preparando…';
+  updatePanoBar();
+  try {
+    const { blob, w, h } = await stitchPanorama(frames.map((f) => f.blob), (s) => { panoStep = s; updatePanoBar(); });
+    // Mantiene la forma de la panorámica aunque el estilo por defecto sea cuadrado.
+    const edits = settings.autoApply ? cloneEdits({ ...settings.defaultEdits, aspect: 'orig' }) : cloneEdits();
+    await addPhoto(blob, w, h, { edits, pano: true });
+    toast(`Panorámica lista (${w}×${h})`, { type: 'ok' });
+  } catch (err) {
+    panoFrames = frames.concat(panoFrames); // quedan para reintentar o descartar
+    toast('Panorámica: ' + err.message, { type: 'error', ms: 7000 });
+  } finally {
+    panoBusy = false;
+    updatePanoBar();
+  }
+}
+
+function bindPano() {
+  $('#panoJoin').addEventListener('click', joinPanorama);
+  $('#panoCancel').addEventListener('click', async () => {
+    if (!await dialog({ title: `¿Descartar ${panoFrames.length} foto(s) de la panorámica?`, okLabel: 'Descartar', danger: true })) return;
+    panoFrames = [];
+    updatePanoBar();
+  });
 }
 
 function bindCamera() {
@@ -352,6 +437,7 @@ function bindCamera() {
     const k = b.dataset.toggle;
     settings.tools[k] = !settings.tools[k];
     if (k === 'ghost' && !settings.tools.ghost) ghostOverride = null;
+    if (k === 'pano' && settings.tools.pano) warmPanorama();
     persistSettings();
     applyToolState();
   }));
@@ -883,41 +969,57 @@ async function processQueue() {
   renderTray();
   const dest = t.label();
   const batch = { kind: t.kind, items: [] };
-  let ok = 0, failed = 0;
+  let ok = 0, failed = 0, authErr = null;
+  const fail = (p, err) => {
+    p.status = 'error';
+    p.error = err.message;
+    failed++;
+    toast(`Error con «${p.name}»: ${err.message}`, { type: 'error', ms: 5000 });
+  };
+  // Mientras una foto sube por la red se va preparando la siguiente (la carpeta local es instantánea).
+  const parallel = t.kind === 'folder' ? 1 : 3;
+  const inflight = new Set();
   try {
     const taken = await t.names();
-    for (const p of queue) {
+    for (const [i, p] of queue.entries()) {
+      if (authErr) break;
       p.status = 'uploading';
       renderTray();
-      showUploadProgress(ok + failed + 1, queue.length);
+      showUploadProgress(i + 1, queue.length);
+      let blob;
       try {
-        const blob = await renderer.exportBlob(p, p.edits, settings.outSize, settings.jpgQ / 100);
-        const replacing = p.replace && p.replace.kind === t.kind;
-        let id;
-        if (replacing) {
-          const keep = p.replace.name.replace(/\.[^.]+$/, '').startsWith(p.name);
-          id = await t.replace(blob, p.replace.id, keep ? p.replace.name : uniqueName(p.name, taken, settings.sep));
-        } else {
-          id = await t.create(blob, uniqueName(p.name, taken, settings.sep));
-        }
-        const origId = settings.keepOriginal ? await t.saveOriginal(p.blob, p.name, settings.sep) : null;
-        batch.items.push({ photo: { ...p, status: 'new' }, id, origId, replaced: replacing });
-        photos.splice(photos.indexOf(p), 1);
-        await db.delete(p.id);
-        forgetPhoto(p);
-        ok++;
+        blob = await renderer.exportBlob(p, p.edits, exportSize(p), settings.jpgQ / 100);
+      } catch (err) {
+        fail(p, err);
+        await db.put(p).catch(() => {});
         renderTray();
         continue;
-      } catch (err) {
-        if (err instanceof AuthError) { p.status = 'queued'; throw err; }
-        p.status = 'error';
-        p.error = err.message;
-        failed++;
-        toast(`Error con «${p.name}»: ${err.message}`, { type: 'error', ms: 5000 });
       }
-      await db.put(p).catch(() => {});
-      renderTray();
+      const replacing = p.replace && p.replace.kind === t.kind;
+      const keep = replacing && p.replace.name.replace(/\.[^.]+$/, '').startsWith(p.name);
+      const name = keep ? p.replace.name : uniqueName(p.name, taken, settings.sep);
+      const job = (async () => {
+        try {
+          const id = replacing ? await t.replace(blob, p.replace.id, name) : await t.create(blob, name);
+          const origId = settings.keepOriginal ? await t.saveOriginal(p.blob, p.name, settings.sep) : null;
+          if (settings.alsoShared && t.kind !== 'shared') mirrorShared(blob, name);
+          batch.items.push({ photo: { ...p, status: 'new' }, id, origId, replaced: replacing });
+          photos.splice(photos.indexOf(p), 1);
+          await db.delete(p.id);
+          forgetPhoto(p);
+          ok++;
+        } catch (err) {
+          if (err instanceof AuthError) { p.status = 'queued'; authErr = err; } else fail(p, err);
+          await db.put(p).catch(() => {});
+        }
+        renderTray();
+      })();
+      inflight.add(job);
+      job.finally(() => inflight.delete(job));
+      if (inflight.size >= parallel) await Promise.race(inflight);
     }
+    await Promise.all(inflight);
+    if (authErr) throw authErr;
   } catch (err) {
     if (err instanceof AuthError) {
       toast('La sesión de Drive venció. Tocá «reconectar» para continuar.', { type: 'error', ms: 6000 });
@@ -934,11 +1036,56 @@ async function processQueue() {
     lastBatch = batch;
     toast(`${ok} foto(s) guardadas en «${dest}»${failed ? ` · ${failed} con error` : ''}`, {
       type: failed ? 'error' : 'ok',
-      action: batch.items.some((i) => !i.replaced) ? undoLastBatch : null,
+      action: t.trash && batch.items.some((i) => !i.replaced) ? undoLastBatch : null,
       actionLabel: 'Deshacer',
     });
     loadNameSuggestions();
   }
+}
+
+// Las panorámicas salen a resolución completa: para eso se sacaron.
+const exportSize = (p) => (p.pano ? 0 : settings.outSize);
+
+/* ---------- copia a «Fotos compartidas» (en segundo plano, con reintentos) ---------- */
+
+const ob = { items: [], active: 0, timer: null, warned: false };
+
+async function loadOutbox() {
+  try { ob.items = (await outbox.all()).map((it) => ({ ...it, tries: 0, next: 0 })); } catch { ob.items = []; }
+  pumpOutbox();
+}
+
+function mirrorShared(blob, name) {
+  const it = { id: uid(), blob, name, tries: 0, next: 0 };
+  ob.items.push(it);
+  outbox.put({ id: it.id, blob, name }).catch(() => {});
+  pumpOutbox();
+}
+
+function pumpOutbox() {
+  clearTimeout(ob.timer);
+  const now = Date.now();
+  while (ob.active < 3) {
+    const it = ob.items.find((x) => !x.busy && x.next <= now);
+    if (!it) break;
+    it.busy = true;
+    ob.active++;
+    uploadShared(it.blob, it.name)
+      .then(() => {
+        ob.items = ob.items.filter((x) => x !== it);
+        outbox.delete(it.id).catch(() => {});
+        if (!ob.items.length) ob.warned = false;
+      })
+      .catch((err) => {
+        it.tries++;
+        it.next = Date.now() + Math.min(5 * 60_000, 5000 * 2 ** it.tries);
+        if (!ob.warned) { ob.warned = true; toast(`No se pudo subir a Fotos compartidas (${err.message}). Se reintenta sola.`, { type: 'error', ms: 5000 }); }
+      })
+      .finally(() => { it.busy = false; ob.active--; updateFolderChip(); pumpOutbox(); });
+  }
+  const waiting = ob.items.filter((x) => !x.busy);
+  if (waiting.length && ob.active < 3) ob.timer = setTimeout(pumpOutbox, Math.max(1000, Math.min(...waiting.map((x) => x.next)) - now));
+  updateFolderChip();
 }
 
 function showUploadProgress(i, n) {
@@ -951,7 +1098,7 @@ async function undoLastBatch() {
   const b = lastBatch;
   lastBatch = null;
   const t = target();
-  if (!b || !t || t.kind !== b.kind) return;
+  if (!b || !t || t.kind !== b.kind || !t.trash) return;
   let n = 0;
   for (const it of b.items) {
     if (it.replaced) continue;
@@ -979,7 +1126,7 @@ async function shareFallback() {
   try {
     for (const [i, p] of queue.entries()) {
       showUploadProgress(i + 1, queue.length);
-      const blob = await renderer.exportBlob(p, p.edits, settings.outSize, settings.jpgQ / 100);
+      const blob = await renderer.exportBlob(p, p.edits, exportSize(p), settings.jpgQ / 100);
       files.push(new File([blob], uniqueName(p.name, taken, settings.sep), { type: 'image/jpeg' }));
     }
   } catch (err) {
@@ -1015,6 +1162,7 @@ async function shareFallback() {
     if (err.name !== 'AbortError') toast('No se pudo guardar: ' + err.message, { type: 'error' });
     return;
   }
+  if (settings.alsoShared) files.forEach((f) => mirrorShared(f, f.name));
   if (await dialog({ title: '¿Se guardaron bien?', text: 'Si es así, quito las fotos de la bandeja.', okLabel: 'Sí, quitar' })) {
     await removePhotos(queue);
   }
@@ -1039,10 +1187,13 @@ function updateFolderChip() {
   let label, warn = false;
   if (settings.dest === 'folder') { label = folderTarget.label() || 'Elegir carpeta'; warn = !folderTarget.configured(); }
   else if (settings.dest === 'drive') { label = settings.folder?.name || 'Elegir carpeta de Drive'; warn = !settings.folder; }
+  else if (settings.dest === 'shared') label = 'Fotos compartidas';
   else label = 'Guardar en Archivos';
+  if (settings.alsoShared && settings.dest !== 'shared') label += ' + Compartidas';
+  if (ob.items.length) label += ` · ☁${ob.items.length}`;
   $('#folderName').textContent = label;
   chip.classList.toggle('warn', warn);
-  $('#btnCatalog').hidden = !target();
+  $('#btnCatalog').hidden = !target()?.list;
 }
 
 async function pickLocalFolder() {
@@ -1065,7 +1216,9 @@ async function onFolderChip() {
     openDriveFolderSheet();
   } else {
     const k = await actionSheet('¿Dónde se guardan las fotos?', [
-      { key: 'info', label: 'Al guardar elegís la carpeta con «Guardar en Archivos»' },
+      { key: 'info', label: settings.dest === 'shared'
+        ? 'Se suben a la carpeta «Fotos compartidas» de Google Drive'
+        : 'Al guardar elegís la carpeta con «Guardar en Archivos»' },
       { key: 'settings', label: 'Cambiar destino en Ajustes' },
     ]);
     if (k === 'settings') showSettings();
@@ -1150,7 +1303,7 @@ const suffixRegex = () => new RegExp(`[${settings.sep.replace(/[-\\\]^]/g, '\\$&
 
 async function loadNameSuggestions() {
   const t = target();
-  if (!t || !t.configured()) return;
+  if (!t?.allNames || !t.configured()) return;
   try {
     if (t.kind === 'folder' && !await folderTarget.hasPermission()) return;
     if (t.kind === 'drive' && !drive.token()) return;
@@ -1180,10 +1333,13 @@ function syncDestUI() {
   $('#destFolderRow').classList.toggle('hidden', settings.dest !== 'folder');
   $('#destFolderName').textContent = folderTarget.label() || 'ninguna';
   $('#driveSection').classList.toggle('hidden', settings.dest !== 'drive');
+  $('#alsoSharedRow').classList.toggle('hidden', settings.dest === 'shared');
+  $('#alsoShared').checked = settings.alsoShared;
   $('#destHint').textContent = {
     folder: 'Las fotos se escriben directo en la carpeta que elijas. En una PC podés elegir la carpeta de Google Drive para escritorio y se sincroniza sola.',
     share: 'Al guardar se abre el menú del sistema: elegí «Guardar en Archivos» y la carpeta (en iPhone puede ser una carpeta de Drive).',
     drive: 'Sube directo a Google Drive. Requiere un Client ID propio de Google Cloud y que tu cuenta esté autorizada.',
+    shared: 'Se suben solas a la carpeta «Fotos compartidas» de Google Drive, sin iniciar sesión. Es lo más rápido en iPhone. Si no hay conexión quedan en cola y se suben al volver.',
   }[settings.dest];
 }
 
@@ -1215,6 +1371,7 @@ function bindSettings() {
     loadNameSuggestions();
   });
   $('#destPick').addEventListener('click', async () => { if (await pickLocalFolder()) syncDestUI(); });
+  $('#alsoShared').addEventListener('change', (ev) => { settings.alsoShared = ev.target.checked; persistSettings(); updateFolderChip(); });
   $('#clientId').addEventListener('change', (ev) => {
     settings.clientId = ev.target.value.trim();
     persistSettings();

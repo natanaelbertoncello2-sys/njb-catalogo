@@ -2,16 +2,18 @@
 const DB_NAME = 'njb-catalogo';
 const STORE = 'photos';
 const KV = 'kv';
+const OUTBOX = 'outbox';
 let dbp = null;
 
 function open() {
   if (dbp) return dbp;
   dbp = new Promise((resolve, reject) => {
-    const req = indexedDB.open(DB_NAME, 2);
+    const req = indexedDB.open(DB_NAME, 3);
     req.onupgradeneeded = () => {
       const db = req.result;
       if (!db.objectStoreNames.contains(STORE)) db.createObjectStore(STORE, { keyPath: 'id' });
       if (!db.objectStoreNames.contains(KV)) db.createObjectStore(KV);
+      if (!db.objectStoreNames.contains(OUTBOX)) db.createObjectStore(OUTBOX, { keyPath: 'id' });
     };
     req.onsuccess = () => resolve(req.result);
     req.onerror = () => reject(req.error);
@@ -45,6 +47,13 @@ export const kv = {
   get: (k) => tx('readonly', (s) => s.get(k), KV),
   set: (k, v) => tx('readwrite', (s) => s.put(v, k), KV),
   delete: (k) => tx('readwrite', (s) => s.delete(k), KV),
+};
+
+// Copias pendientes de subir a «Fotos compartidas» (sobreviven si se cierra la app).
+export const outbox = {
+  all: () => tx('readonly', (s) => s.getAll(), OUTBOX),
+  put: (item) => tx('readwrite', (s) => s.put(item), OUTBOX),
+  delete: (id) => tx('readwrite', (s) => s.delete(id), OUTBOX),
 };
 
 // Ajustes simples en localStorage.

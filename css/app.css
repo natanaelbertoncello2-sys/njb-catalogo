@@ -96,6 +96,13 @@ svg { width: 22px; height: 22px; fill: currentColor; }
   background: linear-gradient(transparent, rgba(0,0,0,.75) 30%);
   display: flex; flex-direction: column; gap: 10px;
 }
+.pano-bar {
+  display: flex; align-items: center; gap: 8px; padding: 6px 6px 6px 12px; border-radius: 14px;
+  background: rgba(20,26,38,.85); border: 1px solid #ffd84d; font-size: 12px; font-weight: 700; color: #ffd84d;
+}
+.pano-bar span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pano-x { width: 32px; height: 32px; border-radius: 50%; color: var(--danger); font-size: 16px; }
+.pano-join { padding: 7px 14px; border-radius: 10px; background: #ffd84d; color: #1a1400; font-weight: 800; }
 .tray { display: flex; gap: 8px; overflow-x: auto; min-height: 0; scrollbar-width: none; }
 .tray::-webkit-scrollbar { display: none; }
 .tray:empty { display: none; }

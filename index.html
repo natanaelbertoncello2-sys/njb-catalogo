@@ -54,10 +54,16 @@
       <button class="tool" data-toggle="ghost">Fantasma</button>
       <button class="tool" data-toggle="timer">3 s</button>
       <button class="tool" data-toggle="burst">Ráfaga</button>
+      <button class="tool" data-toggle="pano">Panorámica</button>
       <div class="zoom" id="zoomBox" hidden></div>
     </div>
 
     <footer class="cam-bottom">
+      <div class="pano-bar hidden" id="panoBar">
+        <span id="panoText"></span>
+        <button class="pano-x" id="panoCancel" aria-label="Descartar panorámica">✕</button>
+        <button class="pano-join" id="panoJoin">Unir</button>
+      </div>
       <div class="tray" id="tray"></div>
       <div class="name-row">
         <input id="productName" type="text" placeholder="Nombre del producto" autocomplete="off" autocapitalize="characters" enterkeyhint="done" list="nameSuggestions">
@@ -227,9 +233,11 @@
           <option value="folder">Carpeta del dispositivo</option>
           <option value="share">Guardar en Archivos / Compartir</option>
           <option value="drive">Google Drive directo (avanzado)</option>
+          <option value="shared">Fotos compartidas (Google Drive, sin cuenta)</option>
         </select>
       </label>
       <p class="muted small" id="destHint"></p>
+      <label class="check" id="alsoSharedRow"><input type="checkbox" id="alsoShared"> Subir también una copia a «Fotos compartidas» (Drive)</label>
       <div class="row-btns" id="destFolderRow">
         <span class="muted" style="align-self:center">Carpeta: <b id="destFolderName"></b></span>
         <button class="btn primary" id="destPick">Elegir carpeta</button>

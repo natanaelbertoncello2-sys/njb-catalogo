@@ -65,14 +65,30 @@ export class Camera {
     await this.track.applyConstraints({ advanced: [{ zoom: this.zoom }] });
   }
 
-  // Captura el cuadro actual a resolución completa.
-  async capture() {
+  // Congela el cuadro actual a resolución completa, al instante. Codificar a JPG es lo lento
+  // y se hace aparte con encode(), así el obturador queda libre enseguida.
+  async grab() {
     const v = this.video;
     const w = v.videoWidth, h = v.videoHeight;
     if (!w || !h) throw new Error('La cámara todavía no está lista');
+    if ('createImageBitmap' in window) {
+      try { return await createImageBitmap(v); } catch { /* fallback abajo */ }
+    }
     const cv = makeCanvas(w, h);
     cv.getContext('2d').drawImage(v, 0, 0, w, h);
+    return cv;
+  }
+
+  async encode(frame) {
+    const w = frame.width, h = frame.height;
+    let cv = frame;
+    if (!(frame instanceof HTMLCanvasElement)) {
+      cv = makeCanvas(w, h);
+      cv.getContext('2d').drawImage(frame, 0, 0);
+    }
     const blob = await canvasToBlob(cv, 'image/jpeg', 0.95);
     return { blob, w, h };
   }
+
+  async capture() { return this.encode(await this.grab()); }
 }

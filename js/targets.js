@@ -2,9 +2,11 @@
 //  - carpeta: una carpeta del dispositivo (PC y Android con Chrome/Edge). Si es la carpeta de
 //    Google Drive para escritorio, las fotos se sincronizan solas.
 //  - drive:   Google Drive directo (opcional, requiere Client ID propio).
+//  - shared:  «Fotos compartidas», carpeta fija de Drive vía Apps Script (sin iniciar sesión).
 // El modo «Guardar en Archivos» (iPhone) no es un destino persistente: se resuelve con Compartir en app.js.
 import { kv } from './db.js';
 import { drive, AuthError, uniqueName } from './drive.js';
+import { uploadShared } from './shared.js';
 
 export class NeedsGesture extends Error {}
 
@@ -103,6 +105,22 @@ export const folderTarget = {
     for await (const name of this.root.keys()) if (IMG.test(name)) out.push(name);
     return out;
   },
+};
+
+/* ------------------------------------------------------------------ */
+/* «Fotos compartidas» (Drive sin iniciar sesión)                      */
+/* ------------------------------------------------------------------ */
+
+// Solo sube: no lista ni borra (la carpeta es de otra cuenta), así que no hay catálogo ni «Deshacer».
+export const sharedTarget = {
+  kind: 'shared',
+  label() { return 'Fotos compartidas'; },
+  configured() { return true; },
+  async prepare() { if (!navigator.onLine) throw new Error('Sin conexión: las fotos quedan en cola'); },
+  async names() { return new Set(); },
+  create(blob, name) { return uploadShared(blob, name); },
+  replace(blob, id, name) { return uploadShared(blob, name); },
+  saveOriginal(blob, base, sep) { return uploadShared(blob, `${base}${sep}original.jpg`); },
 };
 
 /* ------------------------------------------------------------------ */

@@ -11,6 +11,7 @@ App web (PWA) para sacar fotos de producto, dejarlas listas para catálogo y gua
 | PC (Chrome / Edge) | Elegís una carpeta una vez y se guarda ahí directo. Si elegís la carpeta de **Google Drive para escritorio**, se sincroniza sola. |
 | Android (Chrome) | Elegís una carpeta del teléfono una vez y se guarda ahí directo. |
 | iPhone (Safari) | Apple no permite que una web escriba en carpetas. Al guardar se abre «Guardar en Archivos» y elegís la carpeta (puede ser de Drive); iOS recuerda la última usada. |
+| Cualquiera | **Fotos compartidas**: se suben solas a una carpeta fija de Google Drive, sin iniciar sesión. Puede ser el destino principal o una copia adicional («Subir también una copia…»). |
 | Avanzado | Google Drive directo por API (requiere Client ID propio de Google Cloud; ver más abajo). |
 
 Se cambia en **Ajustes → Guardar en**.
@@ -30,7 +31,9 @@ Es HTML/CSS/JS puro: no requiere compilación. Cualquier hosting estático con H
   - **Aplicar a todas** y **Usar por defecto** (cada foto nueva sale con ese estilo).
 - **Nombres automáticos**: `PRODUCTO.jpg`, `PRODUCTO_1.jpg`, `PRODUCTO_2.jpg`… sin pisar archivos existentes. Botón **Deshacer**. Opción de guardar también el original en la subcarpeta `originales`.
 - **Catálogo**: explora la carpeta destino con miniaturas y buscador. Cada foto se puede re-editar (reemplaza el archivo), usar como base, usar como guía fantasma o eliminar.
-- **No se pierde nada**: las fotos sin guardar quedan en el dispositivo (IndexedDB) aunque se cierre el navegador, y quedan en cola si algo falla.
+- **Panorámica**: con el botón «Panorámica» las fotos no van a la bandeja sino a una tira; se saca una serie moviendo el celular de a poco (cada foto superpone un 30-50 % con la anterior) y **Unir** las alinea y funde en una sola imagen de alta resolución (hasta 16 MP) para tener más detalle. Corre en segundo plano con OpenCV.js (~10 MB que se descargan la primera vez); se puede seguir sacando fotos mientras une.
+- **Rápida**: el obturador solo congela el cuadro y queda libre al instante; el JPG se genera en segundo plano. Al guardar en Drive / Fotos compartidas, se suben varias a la vez mientras se preparan las siguientes.
+- **No se pierde nada**: las fotos sin guardar quedan en el dispositivo (IndexedDB) aunque se cierre el navegador, y quedan en cola si algo falla. Las copias a Fotos compartidas también: si no hay conexión se reintentan solas.
 
 ## 1. Publicarla (HTTPS obligatorio para la cámara)
 
@@ -41,6 +44,12 @@ Opción simple — **GitHub Pages**:
 3. La URL queda tipo `https://TU_USUARIO.github.io/njb-catalogo/`.
 
 Alternativa sin cuenta de Git: **Netlify Drop** (https://app.netlify.com/drop) — arrastrás la carpeta `catalogo_web` y listo.
+
+## «Fotos compartidas» (Apps Script)
+
+El código está en `apps-script/fotos-compartidas.gs`, con la carpeta de destino fija (`FOLDER_ID`). Se publica una vez desde https://script.google.com con la cuenta dueña de la carpeta (Implementar → Aplicación web → Ejecutar como: Yo, Acceso: Cualquier usuario) y la URL `/exec` va en `js/config.js` (`SHARED_SCRIPT_URL`). Si se cambia el script: Gestionar implementaciones → Editar → Nueva versión (la URL no cambia).
+
+Ojo: cualquiera que tenga esa URL puede subir archivos a esa carpeta (solo a esa).
 
 ## 2. (Opcional, avanzado) Google Drive directo por API
 
@@ -81,4 +90,4 @@ Subí el número `APP_VERSION` en `js/config.js` y publicá (git push). Las apps
 
 ## Privacidad
 
-Las fotos se procesan en el teléfono. Solo salen hacia tu Google Drive (y, si usás el modo IA, la app descarga el modelo desde el CDN de IMG.LY; las fotos no se envían a ningún servidor). La librería de IA (`@imgly/background-removal`) tiene licencia AGPL: uso personal/interno sin problema.
+Las fotos se procesan en el teléfono (también las panorámicas). Solo salen hacia tu Google Drive o, si se activa, hacia «Fotos compartidas» a través del Apps Script. Si usás el modo IA o panorámicas, la app descarga el motor desde un CDN (IMG.LY / jsDelivr); las fotos no se envían a esos servidores. La librería de IA (`@imgly/background-removal`) tiene licencia AGPL: uso personal/interno sin problema.
