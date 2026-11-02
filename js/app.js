@@ -8,6 +8,7 @@ import { GOOGLE_CLIENT_ID, APP_VERSION } from './config.js';
 import { folderTarget, folderSupported, makeDriveTarget, sharedTarget, NeedsGesture } from './targets.js';
 import { uploadShared } from './shared.js';
 import { stitchPanorama, warmPanorama } from './pano.js';
+import { openMeasure, warmMeasure, MEASURE_REFS } from './measure.js';
 
 /* ================================================================== */
 /* Estado                                                              */
@@ -26,8 +27,10 @@ const settings = loadSettings({
   haptics: true,
   defaultEdits: { ...BASE_EDITS, bg: 'auto', aspect: '1', autoCenter: true, margin: 8 },
   tools: { grid: false, square: false, ghost: false, timer: false, burst: false, pano: false },
+  measureRef: 'A4',        // referencia para «Medidas reales»
 });
 settings.tools.pano ??= false;
+settings.measureRef ??= 'A4';
 if (!settings.clientId && GOOGLE_CLIENT_ID) settings.clientId = GOOGLE_CLIENT_ID;
 if (settings.dest === 'folder' && !folderSupported) settings.dest = 'share';
 const persistSettings = () => saveSettings(settings);
@@ -45,6 +48,8 @@ let ghostOverride = null;     // URL de una foto del catálogo usada como fantas
 let panoFrames = [];          // fotos de la panorámica en curso (solo en memoria)
 let panoBusy = false;
 let panoStep = '';
+let measureMode = false;      // la próxima foto se mide en vez de ir a la bandeja
+let tilt = null;              // inclinación respecto de la mesa (°), para el modo medida
 
 const renderer = new Renderer({
   onAIMask: async (photo, key, blob) => {
@@ -80,6 +85,7 @@ async function init() {
   bindSettings();
   bindCatalog();
   bindPano();
+  bindMeasure();
   applyToolState();
   renderTray();
   updateFolderChip();
@@ -255,6 +261,11 @@ function layoutOverlay() {
   const fg = $('#frameGuide');
   const side = Math.min(w, h);
   Object.assign(fg.style, { left: (w - side) / 2 + 'px', top: (h - side) / 2 + 'px', width: side + 'px', height: side + 'px' });
+  // Guía con la forma de la hoja de referencia (vertical u horizontal según la foto).
+  const ref = MEASURE_REFS[settings.measureRef];
+  const ratio = w < h ? ref.short / ref.long : ref.long / ref.short;
+  const gw = Math.min(w * 0.8, h * 0.8 * ratio), gh = gw / ratio;
+  Object.assign($('#measureGuide').style, { left: (w - gw) / 2 + 'px', top: (h - gh) / 2 + 'px', width: gw + 'px', height: gh + 'px' });
 }
 
 function applyToolState() {
@@ -295,6 +306,9 @@ function onOrientation(ev) {
   $('#btnShutter').classList.toggle('level-ok', ok);
   if (ok && !wasLevel && settings.haptics) navigator.vibrate?.(15);
   wasLevel = ok;
+  // Celular boca arriba sobre la mesa = beta y gamma en 0.
+  tilt = Math.hypot(ev.beta, ev.gamma);
+  if (measureMode) updateMeasureBar();
 }
 
 // El obturador solo congela el cuadro (instantáneo); la codificación a JPG va en una cola
@@ -329,6 +343,15 @@ async function shoot() {
       cd.classList.remove('hidden');
       for (let i = 3; i > 0; i--) { cd.textContent = i; await new Promise((r) => setTimeout(r, 1000)); }
       cd.classList.add('hidden');
+    }
+    if (measureMode) {
+      const fx = $('#flashFx');
+      fx.classList.remove('go'); void fx.offsetWidth; fx.classList.add('go');
+      const frame = await camera.grab();
+      const { blob } = await camera.encode(frame);
+      frame.close?.();
+      goMeasure(blob, 'camera');
+      return;
     }
     // Si se acumulan muchas sin codificar, esperamos un poco (cuida la memoria del celular).
     if (encoding >= 3) await encodeChain;
@@ -425,6 +448,69 @@ function bindPano() {
     panoFrames = [];
     updatePanoBar();
   });
+}
+
+/* ---------- medidas reales ---------- */
+
+function updateMeasureBar() {
+  const bar = $('#measureBar');
+  bar.classList.toggle('hidden', !measureMode);
+  $('#toolMeasure').classList.toggle('on', measureMode);
+  $('#measureGuide').classList.toggle('hidden', !measureMode || !MEASURE_REFS[settings.measureRef].sheet);
+  if (!measureMode) return;
+  const ref = MEASURE_REFS[settings.measureRef];
+  const flat = tilt != null && tilt < 6;
+  bar.classList.toggle('ok', flat);
+  $('#measureGuide').classList.toggle('ok', flat);
+  $('#measureText').textContent = (ref.sheet ? `Producto sobre la ${ref.label.replace(/^\S+/, (s) => s.toLowerCase())}` : 'Tarjeta al lado del producto')
+    + (tilt == null ? ', foto desde arriba' : ` · ${Math.round(tilt)}°${flat ? ' ✓' : ' (poné el celu paralelo a la mesa)'}`);
+  $('#measureRefBtn').textContent = ref.sheet ? ref.label.replace('Hoja ', '') : 'Tarjeta';
+}
+
+async function pickMeasureRef() {
+  const k = await actionSheet('Referencia para medir', Object.entries(MEASURE_REFS).map(([key, r]) => ({
+    key,
+    label: `${key === settings.measureRef ? '✓ ' : ''}${r.label} · ${r.sheet ? 'el producto va encima' : 'va al lado del producto'}`,
+  })));
+  if (!k) return;
+  settings.measureRef = k;
+  persistSettings();
+  layoutOverlay();
+  updateMeasureBar();
+}
+
+function goMeasure(blob, from) {
+  if (from === 'camera') stopCamera();
+  showView('view-measure');
+  openMeasure({
+    blob,
+    ref: settings.measureRef,
+    onRef: (k) => { settings.measureRef = k; persistSettings(); layoutOverlay(); updateMeasureBar(); },
+    // La foto con las medidas dibujadas va sin estilo (no borrar el fondo ni recortarla).
+    onSave: (b, w, h) => addPhoto(b, w, h, { edits: cloneEdits() }),
+    onClose: () => {
+      if (from === 'editor' && ed.photo) { showView('view-editor'); renderPreview(); return; }
+      showView('view-camera');
+      renderTray();
+      startCamera();
+    },
+  }).catch((err) => toast('No se pudo abrir la foto: ' + err.message, { type: 'error' }));
+}
+
+function bindMeasure() {
+  $('#toolMeasure').addEventListener('click', () => {
+    measureMode = !measureMode;
+    if (measureMode) {
+      warmMeasure();
+      toast(MEASURE_REFS[settings.measureRef].sheet
+        ? 'Medidas reales: apoyá el producto sobre la hoja y sacá la foto desde arriba'
+        : 'Medidas reales: poné la tarjeta al lado del producto y sacá la foto desde arriba', { type: 'ok', ms: 4000 });
+    }
+    updateMeasureBar();
+  });
+  $('#measureOff').addEventListener('click', () => { measureMode = false; updateMeasureBar(); });
+  $('#measureRefBtn').addEventListener('click', pickMeasureRef);
+  $('#edMeasure').addEventListener('click', () => { if (ed.photo) goMeasure(ed.photo.blob, 'editor'); });
 }
 
 function bindCamera() {

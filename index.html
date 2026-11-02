@@ -23,6 +23,7 @@
         <img id="ghost" class="ghost hidden" alt="">
         <div id="grid" class="grid hidden"><i></i><i></i><i></i><i></i></div>
         <div id="frameGuide" class="frame-guide hidden"></div>
+        <div id="measureGuide" class="measure-guide hidden"></div>
         <div id="level" class="level"><span></span></div>
       </div>
       <div id="countdown" class="countdown hidden"></div>
@@ -55,6 +56,7 @@
       <button class="tool" data-toggle="timer">3 s</button>
       <button class="tool" data-toggle="burst">Ráfaga</button>
       <button class="tool" data-toggle="pano">Panorámica</button>
+      <button class="tool measure-tool" id="toolMeasure">📏 Medidas reales</button>
       <div class="zoom" id="zoomBox" hidden></div>
     </div>
 
@@ -63,6 +65,11 @@
         <span id="panoText"></span>
         <button class="pano-x" id="panoCancel" aria-label="Descartar panorámica">✕</button>
         <button class="pano-join" id="panoJoin">Unir</button>
+      </div>
+      <div class="measure-bar hidden" id="measureBar">
+        <span id="measureText"></span>
+        <button class="measure-ref" id="measureRefBtn"></button>
+        <button class="pano-x" id="measureOff" aria-label="Salir de medidas reales">✕</button>
       </div>
       <div class="tray" id="tray"></div>
       <div class="name-row">
@@ -98,6 +105,7 @@
       <button class="icon-btn" id="edClose" aria-label="Cerrar"><svg viewBox="0 0 24 24"><path d="M19 6.4 17.6 5 12 10.6 6.4 5 5 6.4 10.6 12 5 17.6 6.4 19 12 13.4 17.6 19 19 17.6 13.4 12z"/></svg></button>
       <div class="ed-title"><span id="edIndex"></span><input id="edName" type="text" placeholder="Nombre" autocapitalize="characters"></div>
       <div class="top-actions">
+        <button class="icon-btn" id="edMeasure" aria-label="Medidas reales"><svg viewBox="0 0 24 24"><path fill-rule="evenodd" d="M2 8h20v8H2zm2 2v4h16v-4h-1.2v2h-1.3v-2h-1.2v3H15v-3h-1.2v2h-1.3v-2h-1.2v3H10v-3H8.8v2H7.5v-2H6.3v3H5v-3z"/></svg></button>
         <button class="icon-btn" id="edCompare" aria-label="Ver original (mantener)"><svg viewBox="0 0 24 24"><path d="M10 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h5v2h2V1h-2v2zm0 15H5l5-6v6zm9-15h-5v2h5v13l-5-6v9h5a2 2 0 0 0 2-2V5a2 2 0 0 0-2-2z"/></svg></button>
         <button class="icon-btn danger" id="edDelete" aria-label="Eliminar"><svg viewBox="0 0 24 24"><path d="M6 19a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/></svg></button>
       </div>
@@ -192,6 +200,37 @@
         <button class="btn ghost-btn" id="edApplyAll">Aplicar a todas</button>
         <button class="btn ghost-btn" id="edSaveDefault">Usar por defecto</button>
         <button class="btn primary" id="edDone">Listo</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ MEDIDAS REALES ============ -->
+  <section id="view-measure" class="view">
+    <header class="topbar solid">
+      <button class="icon-btn" id="msClose" aria-label="Volver"><svg viewBox="0 0 24 24"><path d="M20 11H7.8l5.6-5.6L12 4l-8 8 8 8 1.4-1.4L7.8 13H20z"/></svg></button>
+      <div class="ed-title"><b>Medidas reales</b></div>
+      <div class="top-actions"><button class="ms-ref" id="msRef"></button></div>
+    </header>
+    <div class="ms-stage">
+      <canvas id="msCanvas"></canvas>
+      <canvas id="msLoupe" class="ms-loupe hidden" width="240" height="240"></canvas>
+      <div class="ed-busy hidden" id="msBusy"><div class="spinner"></div><span id="msBusyText">Midiendo…</span></div>
+    </div>
+    <div class="ms-panel">
+      <p class="ms-status" id="msStatus"></p>
+      <div class="ms-chips" id="msChips"></div>
+      <p class="ms-ruler hidden" id="msRuler"></p>
+      <div class="ms-actions" id="msActions">
+        <button data-a="adjust"><svg viewBox="0 0 24 24"><path d="M3 3h6v2H5v4H3zm12 0h6v6h-2V5h-4zM3 15h2v4h4v2H3zm16 0h2v6h-6v-2h4z"/></svg><span>Ajustar ref.</span></button>
+        <button data-a="ruler"><svg viewBox="0 0 24 24"><path fill-rule="evenodd" d="M2 8h20v8H2zm2 2v4h16v-4h-1.2v2h-1.3v-2h-1.2v3H15v-3h-1.2v2h-1.3v-2h-1.2v3H10v-3H8.8v2H7.5v-2H6.3v3H5v-3z"/></svg><span>Regla</span></button>
+        <button data-a="unit"><svg viewBox="0 0 24 24"><path d="M7 7h11l-3-3 1.4-1.4L21.8 8l-5.4 5.4L15 12l3-3H7zm10 10H6l3 3-1.4 1.4L2.2 16l5.4-5.4L9 12l-3 3h11z"/></svg><span>cm</span></button>
+        <button data-a="copy"><svg viewBox="0 0 24 24"><path d="M16 1H4a2 2 0 0 0-2 2v14h2V3h12zm3 4H8a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h11a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2zm0 16H8V7h11z"/></svg><span>Copiar</span></button>
+        <button data-a="save"><svg viewBox="0 0 24 24"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6z"/></svg><span>A la bandeja</span></button>
+        <button data-a="tips"><svg viewBox="0 0 24 24"><path d="M11 18h2v-2h-2zm1-16a10 10 0 1 0 0 20 10 10 0 0 0 0-20zm0 18a8 8 0 1 1 0-16 8 8 0 0 1 0 16zm0-14a4 4 0 0 0-4 4h2a2 2 0 1 1 4 0c0 2-3 1.75-3 5h2c0-2.25 3-2.5 3-5a4 4 0 0 0-4-4z"/></svg><span>Consejos</span></button>
+      </div>
+      <div class="ms-manual hidden" id="msManual">
+        <button class="btn ghost-btn" id="msManualCancel">Cancelar</button>
+        <button class="btn primary" id="msManualGo">Medir con estas esquinas</button>
       </div>
     </div>
   </section>
