@@ -6,4 +6,4 @@ export const GOOGLE_CLIENT_ID = '343811031280-ocdm4u3obnopjj2gii0942bajp9kkjlm.a
 export const SHARED_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbxyoUmIdnUS3XWKogxmtjzQQOFLh4y1bOKJCLwf25RBY_PeECGQ-LiCtUYEbOiUqASpMA/exec';
 
 // Subir este número en cada publicación: las apps instaladas lo detectan y se actualizan solas.
-export const APP_VERSION = '1.5.1';
+export const APP_VERSION = '1.5.2';

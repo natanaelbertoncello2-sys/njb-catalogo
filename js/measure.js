@@ -102,7 +102,7 @@ export async function openMeasure(opts) {
   st.opts = opts;
   st.ref = MEASURE_REFS[opts.ref] ? opts.ref : 'A4';
   st.src?.close?.();
-  Object.assign(st, { result: null, img: null, src: null, busy: true, hidden: new Set(), ruler: false, ra: null, rb: null, manual: null, drag: null });
+  Object.assign(st, { result: null, img: null, src: null, view: null, busy: true, hidden: new Set(), ruler: false, ra: null, rb: null, manual: null, drag: null });
   $('#msBusy').classList.remove('hidden');
   $('#msBusyText').textContent = 'Abriendo foto…';
   $('#msCanvas').getContext('2d').clearRect(0, 0, $('#msCanvas').width, $('#msCanvas').height);
@@ -227,17 +227,49 @@ function draw() {
   c.width = c.clientWidth * dpr;
   c.height = c.clientHeight * dpr;
   const W = c.clientWidth, H = c.clientHeight;
-  const s = Math.min(W / st.w, H / st.h);
-  const L = { s, x: (W - st.w * s) / 2, y: (H - st.h * s) / 2 };
+  // Vista: zoom (z) y desplazamiento (x, y) sobre la foto ajustada a la pantalla (s0).
+  const s0 = Math.min(W / st.w, H / st.h);
+  if (!st.view || st.view.W !== W || st.view.H !== H) st.view = { W, H, s0, z: 1, x: (W - st.w * s0) / 2, y: (H - st.h * s0) / 2 };
+  const v = st.view;
+  const s = s0 * v.z;
+  const L = { s, x: v.x, y: v.y };
   st.layout = L;
   const ctx = c.getContext('2d');
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   ctx.clearRect(0, 0, W, H);
   ctx.translate(L.x, L.y);
   ctx.scale(s, s);
-  ctx.drawImage(st.img, 0, 0);
+  // Con zoom se dibuja la foto original para ver el detalle de verdad.
+  ctx.imageSmoothingQuality = 'high';
+  ctx.drawImage(v.z > 1.05 && st.src ? st.src : st.img, 0, 0, st.w, st.h);
   drawOverlay(ctx, 1 / s);
   if (st.drag?.screen) drawLoupe();
+  const zb = $('#msZoom');
+  zb.classList.toggle('hidden', v.z < 1.05);
+  zb.textContent = `${num(v.z, 1)}× · ver todo`;
+}
+
+const MAX_ZOOM = 8;
+function clampView() {
+  const v = st.view;
+  const iw = st.w * v.s0 * v.z, ih = st.h * v.s0 * v.z;
+  v.x = iw <= v.W ? (v.W - iw) / 2 : Math.min(0, Math.max(v.W - iw, v.x));
+  v.y = ih <= v.H ? (v.H - ih) / 2 : Math.min(0, Math.max(v.H - ih, v.y));
+}
+// Zoom manteniendo fijo el punto de la foto que está bajo (sx, sy) en pantalla.
+function zoomAt(sx, sy, z, from = st.view) {
+  const v = st.view;
+  const ix = (sx - from.x) / (v.s0 * from.z), iy = (sy - from.y) / (v.s0 * from.z);
+  v.z = Math.min(MAX_ZOOM, Math.max(1, z));
+  v.x = sx - ix * v.s0 * v.z;
+  v.y = sy - iy * v.s0 * v.z;
+  clampView();
+}
+function resetZoom() {
+  if (!st.view) return;
+  st.view.z = 1;
+  clampView();
+  draw();
 }
 
 // Lupa sobre el dedo para ubicar esquinas y puntas con precisión.
@@ -282,7 +314,7 @@ function renderPanel() {
   } else {
     const used = MEASURE_REFS[r.ref];
     status.classList.add('ok');
-    status.textContent = `${r.ref !== st.ref ? 'No vi la hoja: usé la ' : 'Referencia: '}${used.label.replace(/^\S+/, (s) => s.toLowerCase())} (${refSize(used)}) · ${r.objects.length} objeto(s). Tocá uno para ocultarlo.`;
+    status.textContent = `${r.ref !== st.ref ? 'No vi la hoja: usé la ' : 'Referencia: '}${used.label.replace(/^\S+/, (s) => s.toLowerCase())} (${refSize(used)}) · ${r.objects.length} objeto(s). Tocá uno para ocultarlo; pellizcá o tocá dos veces para hacer zoom.`;
   }
 
   const chips = $('#msChips');
@@ -474,11 +506,43 @@ function nearest(pts, p, max) {
   return best;
 }
 
+// Un dedo: tocar / arrastrar esquinas, regla o mover la foto con zoom. Dos dedos: zoom y mover.
+// Doble toque: acercar ahí (o volver a ver todo). Rueda del mouse: zoom.
+const ptrs = new Map();
+let pinch = null;
+let lastTap = null;
+
+function screenOf(ev) {
+  const b = $('#msCanvas').getBoundingClientRect();
+  return [ev.clientX - b.left, ev.clientY - b.top];
+}
+
+function startPinch() {
+  const [a, b] = [...ptrs.values()];
+  pinch = { d: Math.max(1, dist(a, b)), mid: [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2], from: { ...st.view } };
+}
+
 function bindGestures() {
   const c = $('#msCanvas');
+  c.addEventListener('wheel', (ev) => {
+    if (!st.view || st.busy) return;
+    ev.preventDefault();
+    const [sx, sy] = screenOf(ev);
+    zoomAt(sx, sy, st.view.z * (ev.deltaY < 0 ? 1.2 : 1 / 1.2));
+    draw();
+  }, { passive: false });
   c.addEventListener('pointerdown', (ev) => {
     if (!st.layout || st.busy) return;
     c.setPointerCapture(ev.pointerId);
+    ptrs.set(ev.pointerId, screenOf(ev));
+    if (ptrs.size === 2) {
+      // Empieza el pellizco: se cancela el arrastre de un dedo (sin perder lo ya movido).
+      st.drag = null;
+      $('#msLoupe').classList.add('hidden');
+      startPinch();
+      return;
+    }
+    if (ptrs.size > 2) return;
     const p = toImg(ev);
     const grab = 40 / st.layout.s;
     let target = null;
@@ -489,14 +553,34 @@ function bindGestures() {
       const i = nearest([st.ra, st.rb], p.img, grab);
       if (i >= 0) target = { kind: 'ruler', i };
     }
-    st.drag = { start: p, target, moved: false };
+    st.drag = { start: p, target, moved: false, view: { ...st.view } };
   });
   c.addEventListener('pointermove', (ev) => {
+    if (ptrs.has(ev.pointerId)) ptrs.set(ev.pointerId, screenOf(ev));
+    if (pinch && ptrs.size >= 2) {
+      const [a, b] = [...ptrs.values()];
+      const mid = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
+      zoomAt(pinch.mid[0], pinch.mid[1], pinch.from.z * dist(a, b) / pinch.d, pinch.from);
+      // y además se arrastra con los dos dedos
+      st.view.x += mid[0] - pinch.mid[0];
+      st.view.y += mid[1] - pinch.mid[1];
+      clampView();
+      draw();
+      return;
+    }
     const d = st.drag;
     if (!d) return;
     const p = toImg(ev);
     if (!d.moved && dist(p.screen, d.start.screen) < 6) return;
     d.moved = true;
+    // Sin nada agarrado (y fuera de la regla): mover la foto ampliada.
+    if (!d.target && !(st.ruler && !st.manual)) {
+      st.view.x = d.view.x + p.screen[0] - d.start.screen[0];
+      st.view.y = d.view.y + p.screen[1] - d.start.screen[1];
+      clampView();
+      draw();
+      return;
+    }
     // Arrastrar en vacío con la regla dibuja una medida nueva.
     if (!d.target && st.ruler && !st.manual) { st.ra = clampImg(d.start.img); st.rb = st.ra; d.target = { kind: 'ruler', i: 1 }; }
     if (!d.target) return;
@@ -509,11 +593,27 @@ function bindGestures() {
     renderPanel();
   });
   const end = (ev) => {
+    ptrs.delete(ev.pointerId);
+    if (pinch) {
+      // Al terminar el pellizco no cuenta como toque; con un dedo todavía apoyado no se hace nada.
+      if (ptrs.size < 2) pinch = null;
+      return;
+    }
     const d = st.drag;
     st.drag = null;
     $('#msLoupe').classList.add('hidden');
-    if (d && !d.moved && ev.type === 'pointerup') onTap(d.start.img);
-    else draw();
+    if (d && !d.moved && ev.type === 'pointerup') {
+      const now = Date.now();
+      if (lastTap && now - lastTap.t < 320 && dist(lastTap.screen, d.start.screen) < 30) {
+        lastTap = null;
+        // Doble toque: acercar ahí, o volver a ver todo si ya estaba ampliado.
+        if (st.view.z > 1.05) resetZoom();
+        else { zoomAt(d.start.screen[0], d.start.screen[1], 3); draw(); }
+        return;
+      }
+      lastTap = { t: now, screen: d.start.screen };
+      onTap(d.start.img);
+    } else draw();
   };
   c.addEventListener('pointerup', end);
   c.addEventListener('pointercancel', end);
@@ -545,6 +645,7 @@ function bindOnce() {
   $('#msRef').addEventListener('click', () => { if (!st.busy) pickRef(); });
   $('#msManualCancel').addEventListener('click', () => { st.manual = null; renderPanel(); draw(); });
   $('#msManualGo').addEventListener('click', () => run(st.manual));
+  $('#msZoom').addEventListener('click', resetZoom);
   $('#msSave').addEventListener('click', async () => {
     if (st.busy) return;
     try { await saveAnnotated(); } catch (err) { toast('No se pudo guardar: ' + err.message, { type: 'error' }); }
