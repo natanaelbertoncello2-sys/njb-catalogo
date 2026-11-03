@@ -217,6 +217,10 @@ input[type=range]::-moz-range-thumb { width: 20px; height: 20px; border-radius: 
 .ms-actions button { flex: 1; min-width: 56px; display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 6px 2px; border-radius: 10px; font-size: 11px; font-weight: 700; color: var(--text); }
 .ms-actions button.on { color: var(--ok); background: var(--panel-2); }
 .ms-actions span { white-space: nowrap; }
+.ms-save { display: flex; gap: 8px; }
+.ms-save .btn { flex: 1; display: flex; align-items: center; justify-content: center; gap: 8px; height: 48px; }
+.ms-save .btn.primary { flex: 2; background: var(--ok); border-color: var(--ok); color: #00210f; font-size: 15px; }
+.ms-save svg { width: 20px; height: 20px; }
 .ms-manual { display: flex; gap: 8px; }
 .ms-manual .btn { flex: 1; }
 .ms-manual .btn.primary { flex: 2; background: var(--ok); border-color: var(--ok); color: #00210f; }

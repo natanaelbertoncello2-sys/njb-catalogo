@@ -482,12 +482,16 @@ async function pickMeasureRef() {
 function goMeasure(blob, from) {
   if (from === 'camera') stopCamera();
   showView('view-measure');
+  const name = (from === 'editor' && ed.photo?.name) || cleanName($('#productName').value);
   openMeasure({
     blob,
+    name,
     ref: settings.measureRef,
     onRef: (k) => { settings.measureRef = k; persistSettings(); layoutOverlay(); updateMeasureBar(); },
+    prepareSave: () => prepareMeasureSave(name),
+    onSave: saveMeasured,
     // La foto con las medidas dibujadas va sin estilo (no borrar el fondo ni recortarla).
-    onSave: (b, w, h) => addPhoto(b, w, h, { edits: cloneEdits() }),
+    onAdd: (b, w, h) => addPhoto(b, w, h, { edits: cloneEdits(), name, measured: true }),
     onClose: () => {
       if (from === 'editor' && ed.photo) { showView('view-editor'); renderPreview(); return; }
       showView('view-camera');
@@ -495,6 +499,39 @@ function goMeasure(blob, from) {
       startCamera();
     },
   }).catch((err) => toast('No se pudo abrir la foto: ' + err.message, { type: 'error' }));
+}
+
+// Mismas comprobaciones que «Guardar», hechas dentro del toque (los permisos de carpeta lo exigen).
+// Devuelve el nombre elegido o null si se cancela.
+async function prepareMeasureSave(suggested) {
+  if (settings.dest === 'folder') {
+    try {
+      if (!folderTarget.configured()) { if (!await pickLocalFolder()) return null; }
+      await folderTarget.prepare({ interactive: true });
+    } catch (err) { toast(err.message, { type: 'error' }); return null; }
+  }
+  if (settings.dest === 'drive') {
+    if (!settings.clientId) { toast('Falta el Client ID de Google (Ajustes)'); return null; }
+    if (!settings.folder) { toast('Primero elegí la carpeta de Drive (botón de carpeta arriba)'); return null; }
+  }
+  const name = await dialog({
+    title: 'Guardar foto con medidas',
+    text: `Nombre del producto. Se guarda en «${target()?.label() || 'Archivos'}».`,
+    input: suggested || randomName(),
+    okLabel: 'Guardar',
+  });
+  if (name === null) return null;
+  const clean = cleanName(name);
+  if (!clean) { toast('El nombre no puede estar vacío', { type: 'error' }); return null; }
+  return clean;
+}
+
+async function saveMeasured(blob, w, h, name) {
+  const p = await addPhoto(blob, w, h, { edits: cloneEdits(), name, status: 'queued', measured: true });
+  await db.put(p);
+  if (!target()) { shareFallback(); return; }
+  if (settings.dest === 'drive' && !drive.token()) { connectDrive(); return; }
+  processQueue();
 }
 
 function bindMeasure() {
@@ -1129,8 +1166,9 @@ async function processQueue() {
   }
 }
 
-// Las panorámicas salen a resolución completa: para eso se sacaron.
-const exportSize = (p) => (p.pano ? 0 : settings.outSize);
+// Las panorámicas salen a resolución completa: para eso se sacaron. Las fotos con medidas
+// también (ya vienen a 3000 px como máximo y así los números se leen bien).
+const exportSize = (p) => (p.pano || p.measured ? 0 : settings.outSize);
 
 /* ---------- copia a «Fotos compartidas» (en segundo plano, con reintentos) ---------- */
 

@@ -10,6 +10,7 @@ export const MEASURE_REFS = {
   TARJETA: { label: 'Tarjeta (DNI / crédito)', long: 85.6, short: 53.98, sheet: false },
 };
 const WORK_SIDE = 1800;
+const EXPORT_SIDE = 3000; // lado mayor de la foto guardada con medidas
 const COLORS = ['#2ec4d6', '#ffd84d', '#ff6fa8', '#9be15d', '#ff9f43', '#b48cff', '#5cc8ff', '#ff5d6c'];
 
 /* ---------- worker ---------- */
@@ -92,15 +93,16 @@ const refSize = (r) => `${num(r.short / 10, 1)} × ${num(r.long / 10, 1)} cm`;
 const st = {
   img: null, w: 0, h: 0, ref: 'A4', result: null, busy: false, unit: 'cm',
   hidden: new Set(), ruler: false, ra: null, rb: null, manual: null, drag: null,
-  opts: null, layout: null,
+  opts: null, layout: null, src: null,
 };
 
-// opts: { blob, ref, onRef(key), onSave(blob, w, h), onClose() }
+// opts: { blob, ref, name, onRef(key), prepareSave() → nombre|null, onSave(blob, w, h, nombre), onAdd(blob, w, h), onClose() }
 export async function openMeasure(opts) {
   bindOnce();
   st.opts = opts;
   st.ref = MEASURE_REFS[opts.ref] ? opts.ref : 'A4';
-  Object.assign(st, { result: null, img: null, busy: true, hidden: new Set(), ruler: false, ra: null, rb: null, manual: null, drag: null });
+  st.src?.close?.();
+  Object.assign(st, { result: null, img: null, src: null, busy: true, hidden: new Set(), ruler: false, ra: null, rb: null, manual: null, drag: null });
   $('#msBusy').classList.remove('hidden');
   $('#msBusyText').textContent = 'Abriendo foto…';
   $('#msCanvas').getContext('2d').clearRect(0, 0, $('#msCanvas').width, $('#msCanvas').height);
@@ -111,7 +113,7 @@ export async function openMeasure(opts) {
   st.h = Math.round(bmp.height * s);
   st.img = makeCanvas(st.w, st.h);
   st.img.getContext('2d').drawImage(bmp, 0, 0, st.w, st.h);
-  bmp.close?.();
+  st.src = bmp; // la original, para guardar en alta resolución
   renderPanel();
   draw();
   run();
@@ -303,6 +305,8 @@ function renderPanel() {
   rl.textContent = mm != null ? `Regla: ${fmtLen(mm, st.unit)}` : 'Regla: tocá o arrastrá entre dos puntos de la foto';
 
   $('#msActions').classList.toggle('hidden', !!st.manual);
+  $('#msSaveRow').classList.toggle('hidden', !!st.manual);
+  $('#msSave').disabled = $('#msShare').disabled = st.busy || !r?.quad;
   $('#msManual').classList.toggle('hidden', !st.manual);
   $('#msManualCancel').classList.toggle('hidden', !r?.quad);
   const act = (k) => $(`#msActions [data-a="${k}"]`);
@@ -310,7 +314,7 @@ function renderPanel() {
   act('ruler').classList.toggle('on', st.ruler);
   act('unit').querySelector('span').textContent = st.unit === 'in' ? 'Pulgadas' : st.unit;
   act('copy').disabled = !r?.objects?.length && mm == null;
-  act('save').disabled = st.busy || !r?.quad;
+  act('tray').disabled = st.busy || !r?.quad;
   $('#msManualGo').disabled = st.busy;
 }
 
@@ -335,13 +339,99 @@ async function copySummary() {
   catch { await dialog({ title: 'Medidas', text, okLabel: 'Cerrar', noCancel: true }); }
 }
 
-async function saveAnnotated() {
-  const c = makeCanvas(st.w, st.h);
+// Foto en alta resolución con las medidas dibujadas y, abajo, una franja con la lista de medidas.
+async function exportAnnotated() {
+  const k = Math.min(EXPORT_SIDE, Math.max(st.src.width, st.src.height)) / Math.max(st.w, st.h);
+  const W = Math.round(st.w * k), H = Math.round(st.h * k);
+  const r = st.result;
+  const items = r.objects.map((o, i) => ({ o, i })).filter(({ i }) => !st.hidden.has(i))
+    .map(({ o, i }) => ({ color: COLORS[i % COLORS.length], text: `${i + 1}  ${fmtObj(o, st.unit)}${o.partial ? ' (cortado)' : ''}` }));
+  const mm = st.ruler ? rulerMm() : null;
+  if (mm != null) items.push({ color: '#ffffff', text: `Regla  ${fmtLen(mm, st.unit)}` });
+
+  // Diseño de la franja: «pastillas» que pasan a la línea siguiente si no entran.
+  const F = Math.max(16, Math.round(W / 34)), pad = Math.round(F * 0.9), gap = Math.round(F * 0.6), ph = Math.round(F * 1.9);
+  const font = (wt, f) => `${wt} ${f}px -apple-system, "Segoe UI", Roboto, sans-serif`;
+  const probe = makeCanvas(1, 1).getContext('2d');
+  probe.font = font(800, F);
+  const rows = [[]];
+  let x = pad;
+  for (const it of items) {
+    it.w = probe.measureText(it.text).width + F * 1.4;
+    if (x + it.w > W - pad && rows[rows.length - 1].length) { rows.push([]); x = pad; }
+    rows[rows.length - 1].push({ ...it, x });
+    x += it.w + gap;
+  }
+  const titleH = Math.round(F * 1.6);
+  const band = items.length ? pad + titleH + rows.length * ph + (rows.length - 1) * gap + pad : 0;
+
+  const c = makeCanvas(W, H + band);
   const ctx = c.getContext('2d');
-  ctx.drawImage(st.img, 0, 0);
+  ctx.drawImage(st.src, 0, 0, W, H);
+  ctx.save();
+  ctx.scale(k, k);
   drawOverlay(ctx, Math.max(st.w, st.h) / 520, { forExport: true });
-  const blob = await canvasToBlob(c, 'image/jpeg', 0.92);
-  await st.opts.onSave?.(blob, st.w, st.h);
+  ctx.restore();
+  if (band) {
+    ctx.fillStyle = '#0a0e17';
+    ctx.fillRect(0, H, W, band);
+    ctx.fillStyle = '#8a96ab';
+    ctx.font = font(700, Math.round(F * 0.8));
+    ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+    const ref = MEASURE_REFS[r.ref];
+    ctx.fillText(`MEDIDAS REALES · referencia: ${ref.label.replace(/^\S+/, (s) => s.toLowerCase())}${st.opts.name ? ' · ' + st.opts.name : ''}`, pad, H + pad + titleH / 2 - F * 0.2);
+    ctx.font = font(800, F);
+    rows.forEach((row, ri) => {
+      const y = H + pad + titleH + ri * (ph + gap);
+      for (const it of row) {
+        ctx.fillStyle = it.color;
+        rrect(ctx, it.x, y, it.w, ph, ph / 2); ctx.fill();
+        ctx.fillStyle = '#000';
+        ctx.fillText(it.text, it.x + F * 0.7, y + ph / 2 + 1);
+      }
+    });
+  }
+  return { blob: await canvasToBlob(c, 'image/jpeg', 0.92), w: W, h: H + band };
+}
+
+async function withBusy(text, fn) {
+  st.busy = true;
+  $('#msBusy').classList.remove('hidden');
+  $('#msBusyText').textContent = text;
+  renderPanel();
+  try { return await fn(); } finally {
+    st.busy = false;
+    $('#msBusy').classList.add('hidden');
+    renderPanel();
+  }
+}
+
+// Guarda directo en el destino elegido (carpeta, Drive, Fotos compartidas…).
+async function saveAnnotated() {
+  const name = await st.opts.prepareSave?.(); // pide nombre y permisos dentro del toque
+  if (!name) return;
+  st.opts.name = name;
+  const { blob, w, h } = await withBusy('Preparando foto…', exportAnnotated);
+  await st.opts.onSave(blob, w, h, name);
+}
+
+async function shareAnnotated() {
+  const { blob } = await withBusy('Preparando foto…', exportAnnotated);
+  const file = new File([blob], `${st.opts.name || 'medidas'}.jpg`, { type: 'image/jpeg' });
+  if (navigator.canShare?.({ files: [file] })) {
+    try { await navigator.share({ files: [file], text: summary() }); } catch (err) { if (err.name !== 'AbortError') throw err; }
+    return;
+  }
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(file);
+  a.download = file.name;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 10_000);
+}
+
+async function addToTray() {
+  const { blob, w, h } = await withBusy('Preparando foto…', exportAnnotated);
+  await st.opts.onAdd?.(blob, w, h);
   toast('Foto con medidas agregada a la bandeja', { type: 'ok' });
 }
 
@@ -451,10 +541,18 @@ function bindOnce() {
   if (bound) return;
   bound = true;
   bindGestures();
-  $('#msClose').addEventListener('click', () => { st.img = null; st.opts?.onClose?.(); });
+  $('#msClose').addEventListener('click', () => { st.img = null; st.src?.close?.(); st.src = null; st.opts?.onClose?.(); });
   $('#msRef').addEventListener('click', () => { if (!st.busy) pickRef(); });
   $('#msManualCancel').addEventListener('click', () => { st.manual = null; renderPanel(); draw(); });
   $('#msManualGo').addEventListener('click', () => run(st.manual));
+  $('#msSave').addEventListener('click', async () => {
+    if (st.busy) return;
+    try { await saveAnnotated(); } catch (err) { toast('No se pudo guardar: ' + err.message, { type: 'error' }); }
+  });
+  $('#msShare').addEventListener('click', async () => {
+    if (st.busy) return;
+    try { await shareAnnotated(); } catch (err) { toast('No se pudo compartir: ' + err.message, { type: 'error' }); }
+  });
   $('#msActions').addEventListener('click', async (ev) => {
     const b = ev.target.closest('[data-a]');
     if (!b || b.disabled) return;
@@ -463,8 +561,8 @@ function bindOnce() {
       case 'ruler': st.ruler = !st.ruler; break;
       case 'unit': st.unit = st.unit === 'cm' ? 'mm' : st.unit === 'mm' ? 'in' : 'cm'; break;
       case 'copy': copySummary(); return;
-      case 'save':
-        try { await saveAnnotated(); } catch (err) { toast('No se pudo guardar: ' + err.message, { type: 'error' }); }
+      case 'tray':
+        try { await addToTray(); } catch (err) { toast('No se pudo agregar: ' + err.message, { type: 'error' }); }
         return;
       case 'tips': showTips(); return;
     }
