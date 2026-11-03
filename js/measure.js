@@ -92,7 +92,8 @@ const refSize = (r) => `${num(r.short / 10, 1)} × ${num(r.long / 10, 1)} cm`;
 
 const st = {
   img: null, w: 0, h: 0, ref: 'A4', result: null, busy: false, unit: 'cm',
-  hidden: new Set(), ruler: false, ra: null, rb: null, manual: null, drag: null,
+  // lines: medidas hechas con la regla, quedan fijas [{a, b}]; pending: primer punto tocado de una nueva.
+  hidden: new Set(), ruler: false, lines: [], pending: null, manual: null, drag: null,
   opts: null, layout: null, src: null,
 };
 
@@ -102,7 +103,7 @@ export async function openMeasure(opts) {
   st.opts = opts;
   st.ref = MEASURE_REFS[opts.ref] ? opts.ref : 'A4';
   st.src?.close?.();
-  Object.assign(st, { result: null, img: null, src: null, view: null, busy: true, hidden: new Set(), ruler: false, ra: null, rb: null, manual: null, drag: null });
+  Object.assign(st, { result: null, img: null, src: null, view: null, busy: true, hidden: new Set(), ruler: false, lines: [], pending: null, manual: null, drag: null });
   $('#msBusy').classList.remove('hidden');
   $('#msBusyText').textContent = 'Abriendo foto…';
   $('#msCanvas').getContext('2d').clearRect(0, 0, $('#msCanvas').width, $('#msCanvas').height);
@@ -130,7 +131,7 @@ async function run(quad) {
     const r = await runWorker(image, st.ref, quad || undefined);
     st.result = r;
     st.hidden.clear();
-    st.ra = st.rb = null;
+    st.pending = null; // las medidas de la regla se conservan: se recalculan con la nueva referencia
     st.manual = r.quad ? null : defaultQuad();
   } catch (err) {
     st.result = { w: st.w, h: st.h, error: err.message, objects: [] };
@@ -202,23 +203,35 @@ function drawOverlay(ctx, u, { forExport = false } = {}) {
       pill(ctx, o.center[0], o.center[1], `${i + 1}  ${fmtObj(o, st.unit)}${o.partial ? '  ⚠' : ''}`, color, u);
     });
   }
-  if (st.ruler && st.ra && !st.manual) {
-    ctx.lineCap = 'round';
-    if (st.rb) {
-      ctx.beginPath(); ctx.moveTo(...st.ra); ctx.lineTo(...st.rb);
-      ctx.strokeStyle = 'rgba(0,0,0,.55)'; ctx.lineWidth = 5 * u; ctx.stroke();
-      ctx.strokeStyle = '#fff'; ctx.lineWidth = 2.5 * u; ctx.stroke();
-    }
-    for (const p of [st.ra, st.rb].filter(Boolean)) {
-      ctx.fillStyle = 'rgba(0,0,0,.55)'; ctx.beginPath(); ctx.arc(p[0], p[1], 7 * u, 0, Math.PI * 2); ctx.fill();
-      ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(p[0], p[1], 5 * u, 0, Math.PI * 2); ctx.fill();
-    }
-    const mm = rulerMm();
-    if (mm != null) pill(ctx, (st.ra[0] + st.rb[0]) / 2, (st.ra[1] + st.rb[1]) / 2 - 18 * u, fmtLen(mm, st.unit), '#fff', u, 15);
-  }
+  if (st.manual) return;
+  const dot = (p, big) => {
+    ctx.fillStyle = 'rgba(0,0,0,.55)'; ctx.beginPath(); ctx.arc(p[0], p[1], (big ? 8 : 6) * u, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(p[0], p[1], (big ? 6 : 4) * u, 0, Math.PI * 2); ctx.fill();
+  };
+  ctx.lineCap = 'round';
+  st.lines.forEach((l, i) => {
+    ctx.beginPath(); ctx.moveTo(...l.a); ctx.lineTo(...l.b);
+    ctx.strokeStyle = 'rgba(0,0,0,.55)'; ctx.lineWidth = 5 * u; ctx.stroke();
+    ctx.strokeStyle = '#fff'; ctx.lineWidth = 2.5 * u; ctx.stroke();
+    // Topes perpendiculares en las puntas, como una cota de plano.
+    const len = Math.max(1e-6, dist(l.a, l.b)), nx = -(l.b[1] - l.a[1]) / len * 8 * u, ny = (l.b[0] - l.a[0]) / len * 8 * u;
+    for (const p of [l.a, l.b]) { ctx.beginPath(); ctx.moveTo(p[0] - nx, p[1] - ny); ctx.lineTo(p[0] + nx, p[1] + ny); ctx.stroke(); }
+    if (st.ruler) { dot(l.a, true); dot(l.b, true); }
+    const mm = lineMm(l);
+    if (mm != null) pill(ctx, (l.a[0] + l.b[0]) / 2, (l.a[1] + l.b[1]) / 2 - 18 * u, `${letter(i)}  ${fmtLen(mm, st.unit)}`, '#fff', u, 14);
+  });
+  if (st.ruler && st.pending) dot(st.pending, true);
 }
 
-const rulerMm = () => (st.ra && st.rb && st.result?.toMm ? dist(applyH(st.result.toMm, st.ra), applyH(st.result.toMm, st.rb)) : null);
+const letter = (i) => String.fromCharCode(65 + (i % 26));
+const lineMm = (l) => (st.result?.toMm ? dist(applyH(st.result.toMm, l.a), applyH(st.result.toMm, l.b)) : null);
+
+function removeLine(i) {
+  const [l] = st.lines.splice(i, 1);
+  renderPanel();
+  draw();
+  toast(`Medida ${letter(i)} borrada`, { action: () => { st.lines.splice(i, 0, l); renderPanel(); draw(); }, actionLabel: 'Deshacer' });
+}
 
 function draw() {
   const c = $('#msCanvas');
@@ -328,13 +341,25 @@ function renderPanel() {
       b.onclick = () => toggleHidden(i);
       chips.append(b);
     });
+    st.lines.forEach((l, i) => {
+      const mm = lineMm(l);
+      if (mm == null) return;
+      const b = document.createElement('button');
+      b.className = 'ms-chip line';
+      b.innerHTML = '<span></span><i>✕</i>';
+      b.querySelector('span').textContent = `${letter(i)}  ${fmtLen(mm, st.unit)}`;
+      b.setAttribute('aria-label', `Borrar medida ${letter(i)}`);
+      b.onclick = () => removeLine(i);
+      chips.append(b);
+    });
   }
   chips.classList.toggle('hidden', !chips.childElementCount);
 
   const rl = $('#msRuler');
   rl.classList.toggle('hidden', !st.ruler || !!st.manual || !r?.toMm);
-  const mm = rulerMm();
-  rl.textContent = mm != null ? `Regla: ${fmtLen(mm, st.unit)}` : 'Regla: tocá o arrastrá entre dos puntos de la foto';
+  rl.textContent = st.pending
+    ? 'Regla: tocá el segundo punto'
+    : `Regla: tocá dos puntos o arrastrá. Cada medida queda fija${st.lines.length ? ' (tocá su ✕ abajo para borrarla)' : ''}.`;
 
   $('#msActions').classList.toggle('hidden', !!st.manual);
   $('#msSaveRow').classList.toggle('hidden', !!st.manual);
@@ -345,7 +370,7 @@ function renderPanel() {
   act('ruler').disabled = !r?.toMm;
   act('ruler').classList.toggle('on', st.ruler);
   act('unit').querySelector('span').textContent = st.unit === 'in' ? 'Pulgadas' : st.unit;
-  act('copy').disabled = !r?.objects?.length && mm == null;
+  act('copy').disabled = !r?.objects?.length && !(st.lines.length && r?.toMm);
   act('tray').disabled = st.busy || !r?.quad;
   $('#msManualGo').disabled = st.busy;
 }
@@ -360,8 +385,7 @@ function summary() {
   const r = st.result;
   const lines = [`Medidas reales (referencia: ${MEASURE_REFS[r.ref].label.replace(/^\S+/, (s) => s.toLowerCase())})`];
   r.objects.forEach((o, i) => { if (!st.hidden.has(i)) lines.push(`${i + 1}) ${fmtObj(o, st.unit)}${o.partial ? ' (puede estar cortado)' : ''}`); });
-  const mm = rulerMm();
-  if (mm != null) lines.push(`Regla: ${fmtLen(mm, st.unit)}`);
+  st.lines.forEach((l, i) => { const mm = lineMm(l); if (mm != null) lines.push(`${letter(i)}) ${fmtLen(mm, st.unit)} (regla)`); });
   return lines.join('\n');
 }
 
@@ -378,8 +402,7 @@ async function exportAnnotated() {
   const r = st.result;
   const items = r.objects.map((o, i) => ({ o, i })).filter(({ i }) => !st.hidden.has(i))
     .map(({ o, i }) => ({ color: COLORS[i % COLORS.length], text: `${i + 1}  ${fmtObj(o, st.unit)}${o.partial ? ' (cortado)' : ''}` }));
-  const mm = st.ruler ? rulerMm() : null;
-  if (mm != null) items.push({ color: '#ffffff', text: `Regla  ${fmtLen(mm, st.unit)}` });
+  st.lines.forEach((l, i) => { const mm = lineMm(l); if (mm != null) items.push({ color: '#ffffff', text: `${letter(i)}  ${fmtLen(mm, st.unit)}` }); });
 
   // Diseño de la franja: «pastillas» que pasan a la línea siguiente si no entran.
   const F = Math.max(16, Math.round(W / 34)), pad = Math.round(F * 0.9), gap = Math.round(F * 0.6), ph = Math.round(F * 1.9);
@@ -550,8 +573,9 @@ function bindGestures() {
       const i = nearest(st.manual, p.img, grab);
       if (i >= 0) target = { kind: 'corner', i };
     } else if (st.ruler) {
-      const i = nearest([st.ra, st.rb], p.img, grab);
-      if (i >= 0) target = { kind: 'ruler', i };
+      const ends = st.lines.flatMap((l) => [l.a, l.b]);
+      const i = nearest(ends, p.img, grab);
+      if (i >= 0) target = { kind: 'line', li: i >> 1, end: i % 2 ? 'b' : 'a' };
     }
     st.drag = { start: p, target, moved: false, view: { ...st.view } };
   });
@@ -582,11 +606,16 @@ function bindGestures() {
       return;
     }
     // Arrastrar en vacío con la regla dibuja una medida nueva.
-    if (!d.target && st.ruler && !st.manual) { st.ra = clampImg(d.start.img); st.rb = st.ra; d.target = { kind: 'ruler', i: 1 }; }
+    if (!d.target && st.ruler && !st.manual) {
+      const a = clampImg(d.start.img);
+      st.lines.push({ a, b: a });
+      st.pending = null;
+      d.target = { kind: 'line', li: st.lines.length - 1, end: 'b', fresh: true };
+    }
     if (!d.target) return;
     const q = clampImg(p.img);
     if (d.target.kind === 'corner') st.manual[d.target.i] = q;
-    else if (d.target.i === 0) st.ra = q; else st.rb = q;
+    else st.lines[d.target.li][d.target.end] = q;
     d.screen = p.screen;
     d.img = q;
     draw();
@@ -602,6 +631,12 @@ function bindGestures() {
     const d = st.drag;
     st.drag = null;
     $('#msLoupe').classList.add('hidden');
+    // Una medida nueva demasiado corta (un roce) no se guarda.
+    if (d?.target?.fresh) {
+      const l = st.lines[d.target.li];
+      if (l && dist(l.a, l.b) * st.layout.s < 12) st.lines.splice(d.target.li, 1);
+      renderPanel();
+    }
     if (d && !d.moved && ev.type === 'pointerup') {
       const now = Date.now();
       if (lastTap && now - lastTap.t < 320 && dist(lastTap.screen, d.start.screen) < 30) {
@@ -625,7 +660,8 @@ function onTap(p) {
   if (st.manual) {
     st.manual[nearest(st.manual, p, Infinity)] = clampImg(p);
   } else if (st.ruler) {
-    if (!st.ra || st.rb) { st.ra = clampImg(p); st.rb = null; } else st.rb = clampImg(p);
+    if (!st.pending) st.pending = clampImg(p);
+    else { st.lines.push({ a: st.pending, b: clampImg(p) }); st.pending = null; }
   } else {
     const i = r.objects.findIndex((o) => pointInPoly(p, o.box));
     if (i >= 0) { toggleHidden(i); return; }
@@ -659,7 +695,7 @@ function bindOnce() {
     if (!b || b.disabled) return;
     switch (b.dataset.a) {
       case 'adjust': st.manual = (st.result?.quad || defaultQuad()).map((p) => [...p]); break;
-      case 'ruler': st.ruler = !st.ruler; break;
+      case 'ruler': st.ruler = !st.ruler; st.pending = null; break;
       case 'unit': st.unit = st.unit === 'cm' ? 'mm' : st.unit === 'mm' ? 'in' : 'cm'; break;
       case 'copy': copySummary(); return;
       case 'tray':
