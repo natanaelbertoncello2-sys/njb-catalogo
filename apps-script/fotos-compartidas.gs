@@ -45,13 +45,38 @@ function doGet() {
 }
 
 // Busca (o crea) la carpeta siguiendo los nombres desde «Mi unidad».
+// La cámara sube varias hojas a la vez: sin el candado cada una creaba su propia carpeta
+// (Drive permite dos con el mismo nombre). Se recuerda el ID para no volver a buscarla.
 function _carpeta(nombres) {
-  var f = DriveApp.getRootFolder();
-  for (var i = 0; i < nombres.length; i++) {
-    var it = f.getFoldersByName(nombres[i]);
-    f = it.hasNext() ? it.next() : f.createFolder(nombres[i]);
+  var props = PropertiesService.getScriptProperties();
+  var clave = 'carpeta:' + nombres.join('/');
+  var guardada = _porId(props.getProperty(clave));
+  if (guardada) return guardada;
+  var lock = LockService.getScriptLock();
+  lock.waitLock(30000);
+  try {
+    guardada = _porId(props.getProperty(clave)); // otra subida la pudo crear mientras esperaba
+    if (guardada) return guardada;
+    var f = DriveApp.getRootFolder();
+    for (var i = 0; i < nombres.length; i++) {
+      var it = f.getFoldersByName(nombres[i]);
+      f = it.hasNext() ? it.next() : f.createFolder(nombres[i]);
+    }
+    props.setProperty(clave, f.getId());
+    return f;
+  } finally {
+    lock.releaseLock();
   }
-  return f;
+}
+
+function _porId(id) {
+  if (!id) return null;
+  try {
+    var f = DriveApp.getFolderById(id);
+    return f.isTrashed() ? null : f;
+  } catch (e) {
+    return null;
+  }
 }
 
 function _json(obj) {

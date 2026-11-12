@@ -1082,16 +1082,29 @@ async function onSave() {
   processQueue();
 }
 
-/* ---------- factura de proveedor: todas las fotos de la bandeja son las hojas de UNA factura ---------- */
+/* ---------- factura de proveedor ---------- */
 // Se suben tal cual se sacaron (sin recortes ni fondo, a resolución completa; la panorámica sirve para
 // que la letra chica se lea) a SISTEMAREDV2/FACTURAS_PROVEEDORES/POR_CARGAR. El sistema RED las lee de ahí.
+// Con varias fotos se pregunta si son facturas distintas (lo común: una foto por factura) o las hojas
+// de una sola. Nombres: FACTURA_AAAAMMDD-HHMMSS[_Fn][_PROVEEDOR]_hNdeM.jpg (Fn = factura n de la tanda).
 async function sendInvoice() {
   if (!photos.length || uploading) return;
   const n = photos.length;
+  let distintas = true;
+  if (n > 1) {
+    distintas = await dialog({
+      title: `🧾 ${n} fotos: ¿qué son?`,
+      text: `¿Son ${n} FACTURAS DISTINTAS (una foto cada una) o las ${n} HOJAS de UNA SOLA factura (en el orden de la bandeja)?`,
+      okLabel: `${n} facturas distintas`,
+      cancelLabel: `Hojas de una factura`,
+    });
+  }
   const prov = await dialog({
     title: '🧾 Factura de proveedor',
-    text: `Se envían ${n} foto(s) al sistema RED como ${n > 1 ? `las ${n} hojas de UNA factura (en el orden de la bandeja)` : 'UNA factura'}.`
-      + ' Si es otra factura, mandá primero esta y después sacá la siguiente.\n\nProveedor (opcional, el sistema lo reconoce por el CUIT):',
+    text: (distintas
+      ? `Se envían ${n} factura(s) al sistema RED.`
+      : `Se envía UNA factura de ${n} hojas al sistema RED.`)
+      + ' Proveedor (opcional, el sistema lo reconoce solo; dejalo vacío si son de varios):',
     input: '',
     okLabel: 'Enviar',
   });
@@ -1104,16 +1117,23 @@ async function sendInvoice() {
   const p2 = (x) => String(x).padStart(2, '0');
   const stamp = `${d.getFullYear()}${p2(d.getMonth() + 1)}${p2(d.getDate())}-${p2(d.getHours())}${p2(d.getMinutes())}${p2(d.getSeconds())}`;
   const provName = cleanName(prov).replace(/[_\s]+/g, '-').slice(0, 40);
-  const base = `FACTURA_${stamp}${provName ? '_' + provName : ''}`;
+  const tail = provName ? '_' + provName : '';
   const list = photos.slice();
-  list.forEach((p, i) => mirrorShared(p.blob, `${base}_h${i + 1}de${n}.jpg`, 'FACTURAS_PROVEEDORES'));
+  list.forEach((p, i) => {
+    const name = distintas
+      ? `FACTURA_${stamp}${n > 1 ? `_F${String(i + 1).padStart(2, "0")}` : ''}${tail}_h1de1.jpg`
+      : `FACTURA_${stamp}${tail}_h${i + 1}de${n}.jpg`;
+    mirrorShared(p.blob, name, 'FACTURAS_PROVEEDORES');
+  });
   for (const p of list) {
     photos.splice(photos.indexOf(p), 1);
     await db.delete(p.id).catch(() => {});
     forgetPhoto(p);
   }
   renderTray();
-  toast(`Factura enviada (${n} hoja/s). En el sistema RED aparece en FACTURAS POR CARGAR.`, { type: 'ok', ms: 5000 });
+  toast(distintas
+    ? `${n} factura(s) enviada(s). En el sistema RED: COMPRAS E INGRESOS → FACTURAS DE LA CÁMARA.`
+    : `Factura de ${n} hojas enviada. En el sistema RED: COMPRAS E INGRESOS → FACTURAS DE LA CÁMARA.`, { type: 'ok', ms: 5000 });
 }
 
 function updateQueuePill() {
