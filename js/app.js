@@ -6,7 +6,7 @@ import { Renderer } from './render.js';
 import { BASE_EDITS, cloneEdits, normalizeImport } from './process.js';
 import { GOOGLE_CLIENT_ID, APP_VERSION } from './config.js';
 import { folderTarget, folderSupported, makeDriveTarget, sharedTarget, NeedsGesture } from './targets.js';
-import { uploadShared } from './shared.js';
+import { uploadShared, sharedSupportsInvoices } from './shared.js';
 import { stitchPanorama, warmPanorama } from './pano.js';
 import { openMeasure, warmMeasure, MEASURE_REFS } from './measure.js';
 
@@ -611,6 +611,7 @@ function renderTray() {
   });
   const n = photos.length;
   $('#btnSave').disabled = n === 0 || uploading;
+  $('#btnFactura').disabled = n === 0 || uploading;
   $('#saveCount').textContent = n ? n : '';
   updateGhost();
   updateQueuePill();
@@ -1010,6 +1011,7 @@ const DEST_LABEL = { folder: 'Carpeta del dispositivo', share: 'Guardar en Archi
 
 function bindSaving() {
   $('#btnSave').addEventListener('click', onSave);
+  $('#btnFactura').addEventListener('click', sendInvoice);
   $('#queuePill').addEventListener('click', async () => {
     if (settings.dest === 'drive' && !drive.token()) { connectDrive(); return; }
     if (settings.dest === 'folder') {
@@ -1062,6 +1064,40 @@ async function onSave() {
   // Drive: si el token venció, redirigimos ya (estamos dentro del toque del usuario).
   if (settings.dest === 'drive' && !drive.token()) { connectDrive(); return; }
   processQueue();
+}
+
+/* ---------- factura de proveedor: todas las fotos de la bandeja son las hojas de UNA factura ---------- */
+// Se suben tal cual se sacaron (sin recortes ni fondo, a resolución completa; la panorámica sirve para
+// que la letra chica se lea) a SISTEMAREDV2/FACTURAS_PROVEEDORES/POR_CARGAR. El sistema RED las lee de ahí.
+async function sendInvoice() {
+  if (!photos.length || uploading) return;
+  const n = photos.length;
+  const prov = await dialog({
+    title: '🧾 Factura de proveedor',
+    text: `Se envían ${n} foto(s) al sistema RED como ${n > 1 ? `las ${n} hojas de UNA factura (en el orden de la bandeja)` : 'UNA factura'}.`
+      + ' Si es otra factura, mandá primero esta y después sacá la siguiente.\n\nProveedor (opcional, el sistema lo reconoce por el CUIT):',
+    input: '',
+    okLabel: 'Enviar',
+  });
+  if (prov === null) return;
+  if (!await sharedSupportsInvoices()) {
+    await dialog({ title: 'Falta un paso en Google Drive', text: 'El receptor de fotos (Apps Script) todavía no sabe guardar facturas. Hay que publicar la versión nueva de apps-script/fotos-compartidas.gs (ver README). Las fotos quedan en la bandeja.', okLabel: 'Entendido' });
+    return;
+  }
+  const d = new Date();
+  const p2 = (x) => String(x).padStart(2, '0');
+  const stamp = `${d.getFullYear()}${p2(d.getMonth() + 1)}${p2(d.getDate())}-${p2(d.getHours())}${p2(d.getMinutes())}${p2(d.getSeconds())}`;
+  const provName = cleanName(prov).replace(/[_\s]+/g, '-').slice(0, 40);
+  const base = `FACTURA_${stamp}${provName ? '_' + provName : ''}`;
+  const list = photos.slice();
+  list.forEach((p, i) => mirrorShared(p.blob, `${base}_h${i + 1}de${n}.jpg`, 'FACTURAS_PROVEEDORES'));
+  for (const p of list) {
+    photos.splice(photos.indexOf(p), 1);
+    await db.delete(p.id).catch(() => {});
+    forgetPhoto(p);
+  }
+  renderTray();
+  toast(`Factura enviada (${n} hoja/s). En el sistema RED aparece en FACTURAS POR CARGAR.`, { type: 'ok', ms: 5000 });
 }
 
 function updateQueuePill() {
@@ -1179,10 +1215,10 @@ async function loadOutbox() {
   pumpOutbox();
 }
 
-function mirrorShared(blob, name) {
-  const it = { id: uid(), blob, name, tries: 0, next: 0 };
+function mirrorShared(blob, name, destino) {
+  const it = { id: uid(), blob, name, destino, tries: 0, next: 0 };
   ob.items.push(it);
-  outbox.put({ id: it.id, blob, name }).catch(() => {});
+  outbox.put({ id: it.id, blob, name, destino }).catch(() => {});
   pumpOutbox();
 }
 
@@ -1194,7 +1230,7 @@ function pumpOutbox() {
     if (!it) break;
     it.busy = true;
     ob.active++;
-    uploadShared(it.blob, it.name)
+    uploadShared(it.blob, it.name, it.destino)
       .then(() => {
         ob.items = ob.items.filter((x) => x !== it);
         outbox.delete(it.id).catch(() => {});

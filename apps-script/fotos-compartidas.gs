@@ -24,7 +24,11 @@ function doPost(e) {
       return _json({ ok: false, error: 'Faltan datos (name, data)' });
     }
 
-    var folder = DriveApp.getFolderById(FOLDER_ID);
+    // Facturas de proveedores: van a la carpeta del sistema RED (Mi unidad/SISTEMA NUEVO/SISTEMAREDV2/
+    // FACTURAS_PROVEEDORES/POR_CARGAR), que cada PC tiene sincronizada con Drive para escritorio.
+    var folder = body.destino === 'FACTURAS_PROVEEDORES'
+      ? _carpeta(['SISTEMA NUEVO', 'SISTEMAREDV2', 'FACTURAS_PROVEEDORES', 'POR_CARGAR'])
+      : DriveApp.getFolderById(FOLDER_ID);
     var bytes = Utilities.base64Decode(body.data);
     var blob = Utilities.newBlob(bytes, body.mimeType || 'image/jpeg', body.name);
     var file = folder.createFile(blob);
@@ -37,7 +41,17 @@ function doPost(e) {
 
 // Permite probar la URL desde el navegador
 function doGet() {
-  return _json({ ok: true, message: 'NJBCAM Drive activo' });
+  return _json({ ok: true, message: 'NJBCAM Drive activo', facturas: true });
+}
+
+// Busca (o crea) la carpeta siguiendo los nombres desde «Mi unidad».
+function _carpeta(nombres) {
+  var f = DriveApp.getRootFolder();
+  for (var i = 0; i < nombres.length; i++) {
+    var it = f.getFoldersByName(nombres[i]);
+    f = it.hasNext() ? it.next() : f.createFolder(nombres[i]);
+  }
+  return f;
 }
 
 function _json(obj) {
