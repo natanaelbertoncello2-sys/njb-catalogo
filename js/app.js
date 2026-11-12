@@ -26,10 +26,11 @@ const settings = loadSettings({
   sep: '_',
   haptics: true,
   defaultEdits: { ...BASE_EDITS, bg: 'auto', aspect: '1', autoCenter: true, margin: 8 },
-  tools: { grid: false, square: false, ghost: false, timer: false, burst: false, pano: false },
+  tools: { grid: false, square: false, ghost: false, timer: false, burst: false, pano: false, plain: false },
   measureRef: 'A4',        // referencia para «Medidas reales»
 });
 settings.tools.pano ??= false;
+settings.tools.plain ??= false;
 settings.measureRef ??= 'A4';
 if (!settings.clientId && GOOGLE_CLIENT_ID) settings.clientId = GOOGLE_CLIENT_ID;
 if (settings.dest === 'folder' && !folderSupported) settings.dest = 'share';
@@ -386,9 +387,25 @@ async function importFiles(files) {
 }
 
 // frame (opcional): el cuadro ya decodificado, para que la miniatura no tenga que volver a leer el JPG.
+// Ajustes con los que sale cada foto nueva.
+//  - «Tal cual» encendido: sin nada (ni fondo liso, ni recorte, ni retoques).
+//  - Con el estilo por defecto, el fondo liso arranca con la tolerancia casi al mínimo (TOL_INICIAL):
+//    con mucha tolerancia se comía partes del producto. Se sube a mano en el editor si hace falta.
+const TOL_INICIAL = 8;
+function newEdits(over = {}) {
+  if (settings.tools.plain) return cloneEdits();
+  if (!settings.autoApply) {
+    const e = cloneEdits();
+    if (settings.tools.square) e.aspect = '1';
+    return e;
+  }
+  const e = cloneEdits({ ...settings.defaultEdits, ...over });
+  e.tol = Math.min(e.tol ?? TOL_INICIAL, TOL_INICIAL);
+  return e;
+}
+
 async function addPhoto(blob, w, h, extra = {}, frame = null) {
-  const edits = settings.autoApply ? cloneEdits(settings.defaultEdits) : cloneEdits();
-  if (settings.tools.square && !settings.autoApply) edits.aspect = '1';
+  const edits = newEdits();
   const photo = {
     id: uid(), createdAt: Date.now(), name: cleanName($('#productName').value),
     blob, w, h, edits, status: 'new', ...extra,
@@ -429,8 +446,7 @@ async function joinPanorama() {
   try {
     const { blob, w, h } = await stitchPanorama(frames.map((f) => f.blob), (s) => { panoStep = s; updatePanoBar(); });
     // Mantiene la forma de la panorámica aunque el estilo por defecto sea cuadrado.
-    const edits = settings.autoApply ? cloneEdits({ ...settings.defaultEdits, aspect: 'orig' }) : cloneEdits();
-    await addPhoto(blob, w, h, { edits, pano: true });
+    await addPhoto(blob, w, h, { edits: newEdits({ aspect: 'orig' }), pano: true });
     toast(`Panorámica lista (${w}×${h})`, { type: 'ok' });
   } catch (err) {
     panoFrames = frames.concat(panoFrames); // quedan para reintentar o descartar

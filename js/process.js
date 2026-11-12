@@ -4,7 +4,7 @@
 
 export const BASE_EDITS = Object.freeze({
   bg: 'none',          // 'none' | 'auto' (fondo liso) | 'ai'
-  tol: 30,             // tolerancia del fondo liso
+  tol: 8,              // tolerancia del fondo liso: arranca casi al mínimo (se sube a mano si hace falta)
   feather: 1,          // suavizado del borde de la máscara
   bgColor: '#ffffff',
   shadow: 0,           // 0-100 sombra suave bajo el producto
