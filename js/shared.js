@@ -9,16 +9,19 @@ const toBase64 = (blob) => new Promise((resolve, reject) => {
   r.readAsDataURL(blob);
 });
 
-// ¿El Apps Script publicado ya sabe guardar facturas? (uno viejo las mandaría a «Fotos compartidas»)
-export async function sharedSupportsInvoices() {
+// ¿El Apps Script publicado ya sabe guardar facturas ('facturas') o pagos ('pagos')? Uno viejo las
+// mandaría a «Fotos compartidas».
+export async function sharedSupports(flag) {
   if (!navigator.onLine) return true; // sin conexión quedan en cola; se comprueba al volver a enviar
   try {
     const r = await (await fetch(SHARED_SCRIPT_URL)).json();
-    return r.facturas === true;
+    return r[flag] === true;
   } catch { return true; }
 }
+export const sharedSupportsInvoices = () => sharedSupports('facturas');
 
-// destino: undefined = «Fotos compartidas»; 'FACTURAS_PROVEEDORES' = carpeta de facturas del sistema RED.
+// destino: undefined = «Fotos compartidas»; 'FACTURAS_PROVEEDORES' = carpeta de facturas del sistema RED;
+// 'FOTOS_PAGOS' = fotos de pagos de clientes para caja (CAJA_CUENTAS/FOTOS_PAGOS/POR_VINCULAR).
 export async function uploadShared(blob, name, destino) {
   if (!navigator.onLine) throw new Error('Sin conexión');
   // text/plain evita la consulta previa de CORS; el script responde con JSON.

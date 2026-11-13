@@ -6,7 +6,7 @@ import { Renderer } from './render.js';
 import { BASE_EDITS, cloneEdits, normalizeImport } from './process.js';
 import { GOOGLE_CLIENT_ID, APP_VERSION } from './config.js';
 import { folderTarget, folderSupported, makeDriveTarget, sharedTarget, NeedsGesture } from './targets.js';
-import { uploadShared, sharedSupportsInvoices } from './shared.js';
+import { uploadShared, sharedSupportsInvoices, sharedSupports } from './shared.js';
 import { stitchPanorama, warmPanorama } from './pano.js';
 import { openMeasure, warmMeasure, MEASURE_REFS } from './measure.js';
 
@@ -627,7 +627,7 @@ function renderTray() {
   });
   const n = photos.length;
   $('#btnSave').disabled = n === 0 || uploading;
-  $('#btnFactura').disabled = n === 0 || uploading;
+  $('#btnEnviar').disabled = n === 0 || uploading;
   $('#saveCount').textContent = n ? n : '';
   updateGhost();
   updateQueuePill();
@@ -1027,7 +1027,7 @@ const DEST_LABEL = { folder: 'Carpeta del dispositivo', share: 'Guardar en Archi
 
 function bindSaving() {
   $('#btnSave').addEventListener('click', onSave);
-  $('#btnFactura').addEventListener('click', sendInvoice);
+  $('#btnEnviar').addEventListener('click', chooseDestination);
   $('#queuePill').addEventListener('click', async () => {
     if (settings.dest === 'drive' && !drive.token()) { connectDrive(); return; }
     if (settings.dest === 'folder') {
@@ -1134,6 +1134,76 @@ async function sendInvoice() {
   toast(distintas
     ? `${n} factura(s) enviada(s). En el sistema RED: COMPRAS E INGRESOS → FACTURAS DE LA CÁMARA.`
     : `Factura de ${n} hojas enviada. En el sistema RED: COMPRAS E INGRESOS → FACTURAS DE LA CÁMARA.`, { type: 'ok', ms: 5000 });
+}
+
+/* ---------- a qué carpeta van las fotos ---------- */
+// NJB (2026-11-13): pedido del dueño - "un botón que diga a qué carpeta tiene que ir de destino:
+// factura, pago, fotos de productos". El 📤 (antes era el 🧾) pregunta y manda cada cosa por su camino.
+async function chooseDestination() {
+  if (!photos.length || uploading) return;
+  const n = photos.length;
+  const k = await actionSheet(`¿A qué carpeta van ${n === 1 ? 'esta foto' : `estas ${n} fotos`}?`, [
+    { key: 'producto', label: '📦 Fotos de productos (la carpeta de siempre)' },
+    { key: 'factura', label: '🧾 Factura de proveedor → Sistema RED' },
+    { key: 'pago', label: '💵 Pago de cliente (cheque / transferencia) → Caja' },
+  ]);
+  if (k === 'producto') onSave();
+  else if (k === 'factura') sendInvoice();
+  else if (k === 'pago') sendPayment();
+}
+
+/* ---------- pago de cliente (cheque / transferencia) ---------- */
+// Van tal cual se sacaron (sin recortes ni fondo) a SISTEMAREDV2/CAJA_CUENTAS/FOTOS_PAGOS/POR_VINCULAR.
+// Caja las lee de ahí (HACER UN RECIBO → FOTOS DE PAGOS), saca los datos sola y las vincula al cliente
+// y al recibo. Con varias fotos se pregunta si son pagos distintos o el frente y dorso de uno solo
+// (en el orden de la bandeja). Nombres: PAGO_AAAAMMDD-HHMMSS[_Pn][_CLIENTE]_hNdeM.jpg (h1 frente, h2 dorso).
+async function sendPayment() {
+  if (!photos.length || uploading) return;
+  const n = photos.length;
+  let distintos = false;
+  if (n > 1) {
+    distintos = await dialog({
+      title: `💵 ${n} fotos: ¿qué son?`,
+      text: `¿Son ${n} PAGOS DISTINTOS (una foto cada uno) o el FRENTE Y DORSO de UN SOLO pago (en el orden de la bandeja)?`,
+      okLabel: `${n} pagos distintos`,
+      cancelLabel: n === 2 ? 'Frente y dorso' : 'Hojas de un pago',
+    });
+  }
+  const cli = await dialog({
+    title: '💵 Pago de cliente',
+    text: (distintos
+      ? `Se envían ${n} pago(s) a caja.`
+      : (n > 1 ? `Se envía UN pago de ${n} hojas a caja.` : 'Se envía el pago a caja.'))
+      + ' Cliente (opcional, caja lo reconoce sola por el CUIT; dejalo vacío si son de varios):',
+    input: '',
+    okLabel: 'Enviar',
+  });
+  if (cli === null) return;
+  if (!await sharedSupports('pagos')) {
+    await dialog({ title: 'Falta un paso en Google Drive', text: 'El receptor de fotos (Apps Script) todavía no sabe guardar pagos. Hay que publicar la versión nueva de apps-script/fotos-compartidas.gs (ver README). Las fotos quedan en la bandeja.', okLabel: 'Entendido' });
+    return;
+  }
+  const d = new Date();
+  const p2 = (x) => String(x).padStart(2, '0');
+  const stamp = `${d.getFullYear()}${p2(d.getMonth() + 1)}${p2(d.getDate())}-${p2(d.getHours())}${p2(d.getMinutes())}${p2(d.getSeconds())}`;
+  const cliName = cleanName(cli).replace(/[_\s]+/g, '-').slice(0, 40);
+  const tail = cliName ? '_' + cliName : '';
+  const list = photos.slice();
+  list.forEach((p, i) => {
+    const name = distintos
+      ? `PAGO_${stamp}_P${String(i + 1).padStart(2, '0')}${tail}_h1de1.jpg`
+      : `PAGO_${stamp}${tail}_h${i + 1}de${n}.jpg`;
+    mirrorShared(p.blob, name, 'FOTOS_PAGOS');
+  });
+  for (const p of list) {
+    photos.splice(photos.indexOf(p), 1);
+    await db.delete(p.id).catch(() => {});
+    forgetPhoto(p);
+  }
+  renderTray();
+  toast(distintos
+    ? `${n} pago(s) enviado(s). En caja: HACER UN RECIBO → FOTOS DE PAGOS.`
+    : `Pago enviado (${n} hoja${n > 1 ? 's' : ''}). En caja: HACER UN RECIBO → FOTOS DE PAGOS.`, { type: 'ok', ms: 5000 });
 }
 
 function updateQueuePill() {
