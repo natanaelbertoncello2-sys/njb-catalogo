@@ -1136,6 +1136,50 @@ async function sendInvoice() {
     : `Factura de ${n} hojas enviada. En el sistema RED: COMPRAS E INGRESOS → FACTURAS DE LA CÁMARA.`, { type: 'ok', ms: 5000 });
 }
 
+/* ---------- factura de aduana (despacho de importación) ---------- */
+// NJB (2026-11-20): pedido del dueño - "saco foto a la factura de importación, o sea de la aduana;
+// eso debería ir a otra carpeta (facturas aduana) y no a la de ingreso, y esa carpeta la toma Compras
+// y busca si la puede vincular con algún pedido pendiente".
+// Todas las fotos de la bandeja son las FOJAS de UN despacho, en el orden de la bandeja. Van tal cual
+// (sin recortes, resolución completa) con nombre ADUANA_AAAAMMDD-HHMMSS[_PROVEEDOR]_hNdeM.jpg por el
+// mismo camino de las facturas (así no hay que tocar el receptor de fotos de Drive). La app COMPRAS
+// las pasa a FACTURAS_PROVEEDORES/ADUANA, las lee y las vincula a su pedido; Sistema RED no las ofrece
+// como factura para ingresar.
+async function sendCustoms() {
+  if (!photos.length || uploading) return;
+  const n = photos.length;
+  const prov = await dialog({
+    title: '🛃 Factura de aduana',
+    text: (n === 1
+      ? 'Se envía 1 foja del despacho a la app Compras.'
+      : `Se envían las ${n} fojas de UN despacho a la app Compras (en el orden de la bandeja).`)
+      + ' Proveedor (opcional, ayuda a encontrar el pedido):',
+    input: '',
+    okLabel: 'Enviar',
+  });
+  if (prov === null) return;
+  if (!await sharedSupportsInvoices()) {
+    await dialog({ title: 'Falta un paso en Google Drive', text: 'El receptor de fotos (Apps Script) todavía no sabe guardar facturas. Hay que publicar la versión nueva de apps-script/fotos-compartidas.gs (ver README). Las fotos quedan en la bandeja.', okLabel: 'Entendido' });
+    return;
+  }
+  const d = new Date();
+  const p2 = (x) => String(x).padStart(2, '0');
+  const stamp = `${d.getFullYear()}${p2(d.getMonth() + 1)}${p2(d.getDate())}-${p2(d.getHours())}${p2(d.getMinutes())}${p2(d.getSeconds())}`;
+  const provName = cleanName(prov).replace(/[_\s]+/g, '-').slice(0, 40);
+  const tail = provName ? '_' + provName : '';
+  const list = photos.slice();
+  list.forEach((p, i) => {
+    mirrorShared(p.blob, `ADUANA_${stamp}${tail}_h${i + 1}de${n}.jpg`, 'FACTURAS_PROVEEDORES');
+  });
+  for (const p of list) {
+    photos.splice(photos.indexOf(p), 1);
+    await db.delete(p.id).catch(() => {});
+    forgetPhoto(p);
+  }
+  renderTray();
+  toast(`Despacho de ${n} foja(s) enviado. En la app Compras: FACTURAS DE ADUANA (se vincula solo a su pedido si lo reconoce).`, { type: 'ok', ms: 6000 });
+}
+
 /* ---------- a qué carpeta van las fotos ---------- */
 // NJB (2026-11-13): pedido del dueño - "un botón que diga a qué carpeta tiene que ir de destino:
 // factura, pago, fotos de productos". El 📤 (antes era el 🧾) pregunta y manda cada cosa por su camino.
@@ -1145,10 +1189,12 @@ async function chooseDestination() {
   const k = await actionSheet(`¿A qué carpeta van ${n === 1 ? 'esta foto' : `estas ${n} fotos`}?`, [
     { key: 'producto', label: '📦 Fotos de productos (la carpeta de siempre)' },
     { key: 'factura', label: '🧾 Factura de proveedor → Sistema RED' },
+    { key: 'aduana', label: '🛃 Factura de ADUANA (despacho de importación) → app Compras' },
     { key: 'pago', label: '💵 Pago de cliente (cheque / transferencia) → Caja' },
   ]);
   if (k === 'producto') onSave();
   else if (k === 'factura') sendInvoice();
+  else if (k === 'aduana') sendCustoms();
   else if (k === 'pago') sendPayment();
 }
 
